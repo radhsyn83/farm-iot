@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "author": "ChatGPT",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-v1", "id": "esp32", "top": -31.52, "left": -187.2, "attrs": {} },
+    { "type": "wokwi-dht22", "id": "dht1", "top": -150, "left": -20, "attrs": {} },
+    { "type": "wokwi-dht22", "id": "dht2", "top": -150, "left": 180, "attrs": {} },
+    {
+      "type": "wokwi-led",
+      "id": "lamp1",
+      "top": -70.8,
+      "left": 99.8,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "lamp2",
+      "top": -70.8,
+      "left": 61.4,
+      "attrs": { "color": "orange" }
+    },
+    { "type": "wokwi-relay-module", "id": "masterRelay", "top": 163.4, "left": 57.6, "attrs": {} }
+  ],
+  "connections": [
+    [ "lamp1:A", "esp32:D18", "green", [ "v0" ] ],
+    [ "lamp2:A", "esp32:D5", "green", [ "v0" ] ],
+    [ "masterRelay:IN", "esp32:D19", "green", [ "h0" ] ],
+    [ "dht1:GND", "esp32:GND.1", "black", [ "v0" ] ],
+    [ "lamp2:C", "esp32:GND.1", "green", [ "v0" ] ],
+    [ "dht2:GND", "esp32:GND.1", "black", [ "v0" ] ],
+    [ "lamp1:C", "esp32:GND.1", "green", [ "v0" ] ],
+    [ "dht1:VCC", "esp32:3V3", "red", [ "v0" ] ],
+    [ "dht2:VCC", "esp32:3V3", "red", [ "v0" ] ],
+    [ "masterRelay:GND", "esp32:GND.1", "black", [ "h0" ] ],
+    [ "masterRelay:VCC", "esp32:3V3", "red", [ "h0" ] ],
+    [ "dht1:SDA", "esp32:D13", "green", [ "v0" ] ],
+    [ "dht2:SDA", "esp32:D12", "green", [ "v0" ] ]
+  ],
+  "dependencies": {}
+}
