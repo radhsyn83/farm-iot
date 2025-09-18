@@ -8,12 +8,26 @@ MqttMessageHandler MqttService::onMessage = nullptr;
 void MqttService::begin(MqttMessageHandler handler) {
   onMessage = handler;
   client.setServer(MQTT_HOST, MQTT_PORT);
+
   if (strlen(MQTT_USER)) client.setCredentials(MQTT_USER, MQTT_PASS);
+
+  // Keepalive (default 15s, lu bisa atur misal 20s)
+  client.setKeepAlive(20);
+
+  // Last Will & Testament (status offline)
+  client.setWill(
+    (tRoot() + "/status").c_str(),
+    1,      // QoS
+    true,   // retain
+    "{\"online\":false}" // payload kalau mati mendadak
+  );
+
   client.onConnect([](bool sp){ MqttService::onMqttConnect(sp); });
   client.onDisconnect([](AsyncMqttClientDisconnectReason r){ MqttService::onMqttDisconnect(r); });
   client.onMessage([](char* t, char* p, AsyncMqttClientMessageProperties pr, size_t len, size_t idx, size_t tot){
     MqttService::onMqttMessage(t, p, pr, len, idx, tot);
   });
+
   connect();
 }
 
