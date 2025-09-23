@@ -85,6 +85,8 @@ void setup() {
 void loop() {
     MqttService::loop();
 
+    SensorService::readTemps(g_temp1, g_temp2);
+
     // if (SensorService::readTemps(g_temp1, g_temp2)) {
         if (millis() - lastTelemetry > TELEMETRY_MS) {
             lastTelemetry = millis();
