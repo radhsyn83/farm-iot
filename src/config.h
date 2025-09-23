@@ -3,14 +3,15 @@
 #include <Arduino.h>
 
 // ========= WiFi =========
-static const char* WIFI_SSID     = "Wokwi-GUEST";
-static const char* WIFI_PASSWORD = "";
+static const char* WIFI_SSID     = "WIFI-SYN";
+static const char* WIFI_PASSWORD = "qwerty1234";
 
 // ========= MQTT =========
-static const char* MQTT_HOST = "192.168.1.10"; // broker
-static const uint16_t MQTT_PORT = 1883;
-static const char* MQTT_USER = "";   // optional
-static const char* MQTT_PASS = "";   // optional
+static const char* MQTT_HOST = "f28a90877b0e429896dd24d452e4cb23.s1.eu.hivemq.cloud"; // broker
+static const uint16_t MQTT_PORT = 8883;
+static const char* MQTT_USER = "radhsyn83";   // optional
+static const char* MQTT_PASS = "Sense324";   // optional
+static const char* MQTT_PUB_STATUS = "esp32/status";
 static const char* DEVICE_ID = "doc-kandang-01";
 static const char* SITE_NS   = "farm/doc1";
 

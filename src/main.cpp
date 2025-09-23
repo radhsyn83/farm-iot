@@ -18,108 +18,86 @@ static uint32_t lastTelemetry = 0;
 
 // ========== MQTT HANDLER ==========
 static void handleMqttMessage(const String& topic, const String& payload) {
-  Logger::info("Got MQTT message %s: %s", topic.c_str(), payload.c_str());
+    Logger::info("Got MQTT message %s: %s", topic.c_str(), payload.c_str());
 
-  // Lamp1
-  if (topic == tCmdLamp1()) {
     JsonDocument doc;
-    if (deserializeJson(doc, payload) == DeserializationError::Ok) {
-      if (doc["on"].is<bool>()) {
-        LampService::switchLamp1(doc["on"]);
-      }
-      if (doc["power"].is<int>()) {
-        LampService::setLamp1(doc["power"]);
-      }
+    if (deserializeJson(doc, payload) != DeserializationError::Ok) {
+        Logger::warn("Invalid JSON payload: %s", payload.c_str());
+        return;
     }
-  }
 
-  // Lamp2
-  else if (topic == tCmdLamp2()) {
-    JsonDocument doc;
-    if (deserializeJson(doc, payload) == DeserializationError::Ok) {
-      if (doc["on"].is<bool>()) {
-        LampService::switchLamp2(doc["on"]);
-      }
-      if (doc["power"].is<int>()) {
-        LampService::setLamp2(doc["power"]);
-      }
+    if (topic == tCmdLamp1() && doc["power"].is<float>()) {
+        float p = constrain(doc["power"].as<float>(), 0.0, 1.0);
+        LampService::setLamp1(p);
     }
-  }
-
-  // Master Power
-  else if (topic == tCmdPowerMaster()) {
-    JsonDocument doc;
-    if (deserializeJson(doc, payload) == DeserializationError::Ok) {
-      if (doc["on"].is<bool>()) {
+    else if (topic == tCmdLamp2() && doc["power"].is<float>()) {
+        float p = constrain(doc["power"].as<float>(), 0.0, 1.0);
+        LampService::setLamp2(p);
+    }
+    else if (topic == tCmdPowerMaster() && doc["on"].is<bool>()) {
         LampService::setMaster(doc["on"]);
-      }
     }
-  }
-
-  // Setpoint
-  else if (topic == tCmdSetpoint()) {
-    JsonDocument doc;
-    if (deserializeJson(doc, payload) == DeserializationError::Ok) {
-      if (doc["t"].is<float>()) { // Use .is<T>() to check for a float value
+    else if (topic == tCmdSetpoint() && doc["t"].is<float>()) {
         g_setpoint = doc["t"];
         StateService::saveSetpoint(g_setpoint);
         Logger::info("New setpoint=%.2f (saved)", g_setpoint);
-      }
     }
-  }
 }
 
 // ========== PUBLISH TELEMETRY ==========
 static void publishTelemetry() {
-  if (!MqttService::connected()) return;
+    if (!MqttService::connected()) return;
 
-  JsonDocument doc;
-  doc["device"] = DEVICE_ID;
-  doc["temp1"] = g_temp1;
-  doc["temp2"] = g_temp2;
-  doc["lamp1"]["on"] = LampService::getLamp1().on;
-  doc["lamp1"]["power"] = LampService::getLamp1().power;
-  doc["lamp2"]["on"] = LampService::getLamp2().on;
-  doc["lamp2"]["power"] = LampService::getLamp2().power;
-  doc["power_master"] = LampService::getMaster();
-  doc["setpoint"] = g_setpoint;
-  doc["ts"] = millis();
+    JsonDocument doc;
+    doc["device"] = DEVICE_ID;
+    doc["temp1"] = g_temp1;
+    doc["temp2"] = g_temp2;
+    doc["lamp1"]["power"] = LampService::getLamp1().power;
+    doc["lamp2"]["power"] = LampService::getLamp2().power;
+    doc["power_master"] = LampService::getMaster();
+    doc["setpoint"] = g_setpoint;
+    doc["ts"] = millis();
 
-  String out;
-  serializeJson(doc, out);
-  MqttService::publish(tTelemetry(), out, false, 0);
+    String out;
+    serializeJson(doc, out);
+    MqttService::publish(tTelemetry(), out, false);
 
-  Logger::info("Telemetry published: %s", out.c_str());
+    Logger::info("Telemetry published: %s", out.c_str());
 }
 
 // ========== SETUP ==========
 void setup() {
-  delay(1000);
-  Logger::info("Booting ESP32 Brooder Controller...");
+    delay(1000);
+    Logger::begin();
 
-  WiFiService::begin();
-  StateService::begin();
-  SensorService::begin();
-  LampService::begin();
+    WiFiService::begin();
+    StateService::begin();
+    SensorService::begin();
+    LampService::begin();
 
-  g_setpoint = StateService::loadSetpoint();
-  Logger::info("Loaded setpoint=%.2f", g_setpoint);
+    g_setpoint = StateService::loadSetpoint();
+    Logger::info("Loaded setpoint=%.2f", g_setpoint);
 
-  MqttService::begin(handleMqttMessage);
+    MqttService::begin(handleMqttMessage);
 }
 
 // ========== LOOP ==========
 void loop() {
-  WiFiService::loop();
-  MqttService::loop();
+    MqttService::loop();
 
-  // Read sensors
-  if (SensorService::readTemps(g_temp1, g_temp2)) {
-    if (millis() - lastTelemetry > TELEMETRY_MS) {
-      lastTelemetry = millis();
-      publishTelemetry();
-    }
-  } else {
-    Logger::warn("Failed to read temperature sensors");
-  }
+    // if (SensorService::readTemps(g_temp1, g_temp2)) {
+        if (millis() - lastTelemetry > TELEMETRY_MS) {
+            lastTelemetry = millis();
+
+            if (WiFiService::hasInternetPing()) {
+                Logger::info("Internet access OK");
+            } else {
+                Logger::warn("No internet access");
+            }
+
+            publishTelemetry();
+        }
+    // } else {
+        // Logger::warn("Failed to read temperature sensors");
+    // }
 }

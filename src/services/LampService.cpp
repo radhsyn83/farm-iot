@@ -5,7 +5,6 @@
 #if __has_include(<RBDdimmer.h>)
 #include <RBDdimmer.h>
 #endif
-
 LampState LampService::l1;
 LampState LampService::l2;
 bool LampService::masterOn = true;
@@ -56,7 +55,7 @@ void LampService::restoreState() {
   apply(LAMP1_PIN, l1.power);
   apply(LAMP2_PIN, l2.power);
 
-  Logger::info("Restored state L1=%d L2=%d Master=%d",
+  Logger::info("Restored state L1=%.2f L2=%.2f Master=%d",
                l1.power, l2.power, masterOn);
 }
 
@@ -70,24 +69,25 @@ void LampService::begin() {
     setupPin(LAMP1_PIN);
     setupPin(LAMP2_PIN);
   }
-  restoreState(); // load state terakhir
+  restoreState();
 }
 
-void LampService::apply(uint8_t pin, uint8_t percent) {
-  if (!masterOn) percent = 0;
-  percent = constrain(percent, 0, 100);
+void LampService::apply(uint8_t pin, float power) {
+  if (!masterOn) power = 0.0;
+  power = constrain(power, 0.0f, 1.0f);
 
   if (LAMP_MODE == LampMode::ROBOTDYN_AC) {
   #if __has_include(<RBDdimmer.h>)
+    int percent = int(power * 100);
     if (pin == LAMP1_PIN) dimmer1.setPower(percent);
     else if (pin == LAMP2_PIN) dimmer2.setPower(percent);
   #endif
   } else if (LAMP_MODE == LampMode::PWM_DC) {
-    int duty = map(percent, 0, 100, 0, 255);
+    int duty = int(power * 255);
     if (pin == LAMP1_PIN) ledcWrite(PWM_CHANNEL_1, duty);
     else if (pin == LAMP2_PIN) ledcWrite(PWM_CHANNEL_2, duty);
   } else { // RELAY
-    digitalWrite(pin, (percent >= 50) ? HIGH : LOW);
+    digitalWrite(pin, (power >= 0.5f) ? HIGH : LOW);
   }
 }
 
@@ -103,22 +103,17 @@ void LampService::setMaster(bool on) {
 
 bool LampService::getMaster() { return masterOn; }
 
-void LampService::setLamp1(uint8_t power) {
-  l1.power = constrain(power, 0, 100);
-  l1.on = l1.power > 0;
+void LampService::setLamp1(float power) {
+  l1.power = constrain(power, 0.0f, 1.0f);
   apply(LAMP1_PIN, l1.power);
   LampService::saveState();
 }
 
-void LampService::setLamp2(uint8_t power) {
-  l2.power = constrain(power, 0, 100);
-  l2.on = l2.power > 0;
+void LampService::setLamp2(float power) {
+  l2.power = constrain(power, 0.0f, 1.0f);
   apply(LAMP2_PIN, l2.power);
   LampService::saveState();
 }
 
 LampState LampService::getLamp1() { return l1; }
 LampState LampService::getLamp2() { return l2; }
-
-void LampService::switchLamp1(bool on) { setLamp1(on ? 100 : 0); }
-void LampService::switchLamp2(bool on) { setLamp2(on ? 100 : 0); }

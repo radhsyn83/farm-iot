@@ -5,7 +5,6 @@
 #include "StateService.h"
 
 struct LampState {
-  bool on = false;
   uint8_t power = 0; // 0–100 %
 };
 
@@ -16,8 +15,8 @@ public:
   static void setMaster(bool on);
   static bool getMaster();
 
-  static void setLamp1(uint8_t power);
-  static void setLamp2(uint8_t power);
+  static void setLamp1(float power);
+  static void setLamp2(float power);
 
   static LampState getLamp1();
   static LampState getLamp2();
@@ -29,7 +28,7 @@ public:
   static void restoreState();
 
 private:
-  static void apply(uint8_t pin, uint8_t percent);
+  static void apply(uint8_t pin, float percent);
   static void setupPin(uint8_t pin);
 
   static LampState l1;

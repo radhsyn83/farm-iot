@@ -2,6 +2,11 @@
 #include <Arduino.h>
 
 struct Logger {
+  static void begin() {
+    Serial.begin(115200);
+    Logger::info("Booting ESP32 Brooder Controller...");
+  }
+
   template<typename... Args>
   static void info(const char* fmt, Args... args) {
     char buf[256]; snprintf(buf,sizeof(buf),fmt,args...);

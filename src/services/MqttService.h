@@ -1,26 +1,28 @@
 #pragma once
-#include <AsyncMqttClient.h>
-#include <Ticker.h>
-#include "../config.h"
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
 #include "../helpers/Logger.h"
-#include "../topics.h"
+#include "Topics.h"
 
+// handler supaya app lain bisa dapet pesan
 typedef std::function<void(const String& topic, const String& payload)> MqttMessageHandler;
 
 class MqttService {
 public:
-  static void begin(MqttMessageHandler handler);
-  static void loop();
-  static bool connected();
-  static void publish(const String& topic, const String& payload, bool retain=false, uint8_t qos=0);
-  static void subscribeTopic(const String& topic, uint8_t qos=0);
+    static void begin(MqttMessageHandler handler = nullptr);
+    static void loop();
+    static bool connected();
+
+    static void publish(const String& topic, const String& payload, bool retain = false);
+    static void subscribeTopic(const String& topic);
+
 private:
-  static void connect();
-  static void onMqttConnect(bool sessionPresent);
-  static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason);
-  static void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties,
-                            size_t len, size_t index, size_t total);
-  static AsyncMqttClient client;
-  static Ticker reconnectTimer;
-  static MqttMessageHandler onMessage;
+    static WiFiClientSecure wifiClient;
+    static PubSubClient client;
+    static MqttMessageHandler onMessage;
+    static unsigned long lastReconnectAttempt;
+
+    static void reconnect();
+    static void callback(char* topic, byte* payload, unsigned int length);
 };

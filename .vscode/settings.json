@@ -1,6 +1,10 @@
 {
     "files.associations": {
         "*.embeddedhtml": "html",
-        "cmath": "cpp"
+        "cmath": "cpp",
+        "algorithm": "cpp",
+        "*.bak2": "cpp",
+        "tuple": "cpp",
+        "streambuf": "cpp"
     }
 }
