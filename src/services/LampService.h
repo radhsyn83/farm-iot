@@ -5,7 +5,7 @@
 #include "StateService.h"
 
 struct LampState {
-  uint8_t power = 0; // 0–100 %
+  float power = 0.0f; // 0.0–1.0
 };
 
 class LampService {

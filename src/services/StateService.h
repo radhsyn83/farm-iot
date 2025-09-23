@@ -6,14 +6,14 @@ class StateService {
 public:
   static void begin();
 
-  // Lamp states
-  static void saveLamp1(uint8_t power);
-  static void saveLamp2(uint8_t power);
+  // Lamp states (float 0.0–1.0)
+  static void saveLamp1(float power01);
+  static void saveLamp2(float power01);
   static void saveMaster(bool on);
 
-  static uint8_t loadLamp1();
-  static uint8_t loadLamp2();
-  static bool loadMaster();
+  static float loadLamp1();
+  static float loadLamp2();
+  static bool  loadMaster();
 
   // Setpoint
   static void saveSetpoint(float val);

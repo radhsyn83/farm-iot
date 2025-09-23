@@ -23,7 +23,7 @@ String ConfigHelper::load(const char* key, const char* def) {
 
 void ConfigHelper::saveFloat(const char* key, float value) {
   prefs.putFloat(key, value);
-  Logger::info("Saved [%s] = %.2f", key, value);
+  Logger::info("Saved Float [%s] = %.2f", key, value);
 }
 
 float ConfigHelper::loadFloat(const char* key, float def) {

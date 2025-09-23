@@ -1,80 +1,119 @@
 #include "MqttService.h"
 #include "../config.h"
+#include "../helpers/Logger.h"
+#include "WiFiService.h"    // <— supaya bisa cek WiFiService::isConnected()
 
-// static member
+// ===== Static members =====
 WiFiClientSecure MqttService::wifiClient;
 PubSubClient MqttService::client(MQTT_HOST, MQTT_PORT, MqttService::callback, MqttService::wifiClient);
 MqttMessageHandler MqttService::onMessage = nullptr;
 unsigned long MqttService::lastReconnectAttempt = 0;
+uint32_t MqttService::reconnectBackoffMs = 1000;  // start 1s, max 30s
 
 void MqttService::begin(MqttMessageHandler handler) {
-    onMessage = handler;
-    wifiClient.setInsecure(); // TLS tanpa CA certificate
+  onMessage = handler;
+
+  wifiClient.setInsecure();
+
+
+  // PubSubClient tuning
+  client.setBufferSize(2048);  // jika payload telemetry bisa “gemuk”
+  client.setKeepAlive(20);
+  client.setSocketTimeout(5);  // detik
+
+  // Note: kalau kamu pakai konstruktor tanpa host/port, bisa panggil:
+  // client.setServer(MQTT_HOST, MQTT_PORT);
+  // client.setCallback(MqttService::callback);
 }
 
 void MqttService::loop() {
-    if (!client.connected()) {
-        unsigned long now = millis();
-        if (now - lastReconnectAttempt > 2000) {
-            lastReconnectAttempt = now;
-            reconnect();
-        }
-    } else {
-        client.loop(); // keep-alive ping otomatis
+  // Jangan coba MQTT kalau Wi-Fi belum connect
+  if (!WiFiService::isConnected()) {
+    // reset backoff biar cepat coba lagi ketika Wi-Fi balik normal
+    reconnectBackoffMs = 1000;
+    return;
+  }
+
+  if (!client.connected()) {
+    unsigned long now = millis();
+    if (now - lastReconnectAttempt >= reconnectBackoffMs) {
+      lastReconnectAttempt = now;
+      reconnect();
+      // Exponential backoff (maks 30s) + jitter kecil (0–200ms)
+      if (!client.connected()) {
+        reconnectBackoffMs = min<uint32_t>(reconnectBackoffMs * 2, 30000);
+        reconnectBackoffMs += (uint32_t)random(0, 200);
+      } else {
+        reconnectBackoffMs = 1000; // reset kalau sukses
+      }
     }
+  } else {
+    client.loop(); // proses keep-alive & callback
+  }
 }
 
-bool MqttService::connected() {
-    return client.connected();
-}
+bool MqttService::connected() { return client.connected(); }
 
 void MqttService::publish(const String& topic, const String& payload, bool retain) {
-    if (connected()) client.publish(topic.c_str(), payload.c_str(), retain);
+  if (connected()) {
+    // PubSubClient hanya QoS0 untuk publish; pastikan payload < bufferSize
+    if (!client.publish(topic.c_str(), payload.c_str(), retain)) {
+      Logger::warn("MQTT publish failed (topic=%s, len=%u)", topic.c_str(), payload.length());
+    }
+  }
 }
 
 void MqttService::subscribeTopic(const String& topic) {
-    if (connected()) {
-        client.subscribe(topic.c_str());
-        Logger::info("MQTT subscribed: %s", topic.c_str());
+  if (connected()) {
+    if (client.subscribe(topic.c_str())) {
+      Logger::info("MQTT subscribed: %s", topic.c_str());
+    } else {
+      Logger::warn("MQTT subscribe failed: %s", topic.c_str());
     }
+  }
 }
 
 void MqttService::callback(char* topic, byte* payload, unsigned int length) {
-    String t(topic);
-    String pl;
-    for (unsigned int i = 0; i < length; i++) pl += (char)payload[i];
-    Logger::info("MQTT msg on %s: %s", t.c_str(), pl.c_str());
+  String t(topic);
+  String pl;
+  pl.reserve(length);
+  for (unsigned int i = 0; i < length; i++) pl += (char)payload[i];
 
-    if (onMessage) onMessage(t, pl);
+  Logger::info("MQTT msg on %s: %s", t.c_str(), pl.c_str());
+  if (onMessage) onMessage(t, pl);
 }
 
 void MqttService::reconnect() {
-    Logger::info("Attempting MQTT connection to %s:%d ...", MQTT_HOST, MQTT_PORT);
+  Logger::info("Attempting MQTT TLS connection to %s:%d ...", MQTT_HOST, MQTT_PORT);
 
-    // PubSubClient connect signature: 
-    // connect(clientId, user, password, willTopic, willQos, willRetain, willMessage, keepAlive)
-    if (client.connect(
-            DEVICE_ID,         // clientId
-            MQTT_USER,         // username
-            MQTT_PASS,         // password
-            tState().c_str(),  // willTopic
-            1,                 // willQos
-            true,              // willRetain
-            "offline",         // willMessage
-            20                 // keepAlive in seconds
-        )) 
-    {
-        Logger::info("MQTT connected");
+  // (Opsional) SNI—kebanyakan broker modern butuh ini aktif
+  wifiClient.setHandshakeTimeout(15);
+  // WiFiClientSecure di ESP32 set SNI otomatis sesuai host yang dipakai di connect(),
+  // jadi pastikan MQTT_HOST adalah hostname (bukan IP) — sudah benar di config.h.
 
-        // subscribe all topics after connect
-        subscribeTopic(tCmdLamp1());
-        subscribeTopic(tCmdLamp2());
-        subscribeTopic(tCmdPowerMaster());
-        subscribeTopic(tCmdSetpoint());
+  // Last-Will & KeepAlive
+  bool ok = client.connect(
+    DEVICE_ID,             // clientId
+    MQTT_USER,             // username
+    MQTT_PASS,             // password
+    tState().c_str(),      // willTopic
+    1,                     // willQos (PubSubClient: hanya dipakai untuk LWT)
+    true,                  // willRetain
+    "offline",             // willMessage
+    20                     // keepAlive (detik)
+  );
 
-        // publish online
-        publish(tState(), "online", true);
-    } else {
-        Logger::warn("MQTT connect failed, rc=%d", client.state());
-    }
+  if (ok) {
+    Logger::info("MQTT connected");
+    // Subscribe channel command
+    subscribeTopic(tCmdLamp1());
+    subscribeTopic(tCmdLamp2());
+    subscribeTopic(tCmdPowerMaster());
+    subscribeTopic(tCmdSetpoint());
+
+    // Publish ONLINE state (retained)
+    publish(tState(), "online", true);
+  } else {
+    Logger::warn("MQTT connect failed, rc=%d", client.state());
+  }
 }

@@ -3,8 +3,10 @@
 #include <Arduino.h>
 
 // ========= WiFi =========
-static const char* WIFI_SSID     = "WIFI-SYN";
-static const char* WIFI_PASSWORD = "qwerty1234";
+static const char* WIFI_SSID     = "";
+static const char* WIFI_PASSWORD = "";
+// static const char* WIFI_SSID     = "WIFI-SYN";
+// static const char* WIFI_PASSWORD = "qwerty1234";
 
 // ========= MQTT =========
 static const char* MQTT_HOST = "f28a90877b0e429896dd24d452e4cb23.s1.eu.hivemq.cloud"; // broker
@@ -32,3 +34,7 @@ static const LampMode LAMP_MODE = LampMode::ROBOTDYN_AC;
 static const char* API_BASE_URL   = "http://192.168.1.20:8000";
 static const char* API_NOTIF_PATH = "/api/notify";
 static const uint32_t API_TIMEOUT_MS = 4000;
+
+// ========== Provisioning ==========
+static const char* PROVISION_AP_PASS = "esp32setup";   // password AP sementara (min 8 char). Kosongkan jika ingin open (tidak disarankan).
+static const char* PROVISION_TOKEN   = "abcd1234";     // token sederhana utk POST /provision & /reset (opsional, bisa kosong)
