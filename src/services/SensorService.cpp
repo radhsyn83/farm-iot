@@ -8,9 +8,11 @@ void SensorService::begin() {
   dht2.begin();
 }
 
-bool SensorService::readTemps(float& t1, float& t2) {
+bool SensorService::readTemps(float& t1, float& t2, float& h1, float& h2) {
   t1 = dht1.readTemperature();
   t2 = dht2.readTemperature();
-  if (isnan(t1) || isnan(t2)) return false;
+  h1 = dht1.readHumidity();
+  h2 = dht2.readHumidity();
+  if (isnan(t1) || isnan(t2) || isnan(h1) || isnan(h2)) return false;
   return true;
 }

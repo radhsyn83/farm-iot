@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>            // untuk String, millis()
+#include <ArduinoJson.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include "../helpers/Logger.h"
@@ -27,7 +28,9 @@ private:
   static MqttMessageHandler onMessage;
   static unsigned long lastReconnectAttempt;
   static uint32_t reconnectBackoffMs;   // <— tambahkan untuk exponential backoff
-
+  static unsigned long lastHeartbeat;
+  static void publishHeartbeat();
+  
   // ===== internals =====
   static void callback(char* topic, uint8_t* payload, unsigned int length);
 };

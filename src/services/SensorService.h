@@ -6,7 +6,7 @@
 class SensorService {
 public:
   static void begin();
-  static bool readTemps(float& t1, float& t2);
+  static bool readTemps(float& t1, float& t2, float& h1, float& h2);
 private:
   static DHT dht1;
   static DHT dht2;

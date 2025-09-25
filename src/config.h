@@ -13,9 +13,8 @@ static const char* MQTT_HOST = "f28a90877b0e429896dd24d452e4cb23.s1.eu.hivemq.cl
 static const uint16_t MQTT_PORT = 8883;
 static const char* MQTT_USER = "radhsyn83";   // optional
 static const char* MQTT_PASS = "Sense324";   // optional
-static const char* MQTT_PUB_STATUS = "esp32/status";
 static const char* DEVICE_ID = "doc-kandang-01";
-static const char* SITE_NS   = "farm/doc1";
+static const char* SITE_NS   = "esp32/doc1";
 
 // ========= Telemetry Interval =========
 static const uint32_t TELEMETRY_MS = 5000;

@@ -14,6 +14,8 @@
 // ====== Globals ======
 static float g_temp1 = NAN;
 static float g_temp2 = NAN;
+static float g_hum1 = NAN;
+static float g_hum2 = NAN;
 static float g_setpoint = 32.0;
 static uint32_t lastTelemetry = 0;
 
@@ -113,12 +115,14 @@ static void publishTelemetry() {
 
   JsonDocument doc;
   doc["device"] = DEVICE_ID;
-  doc["temp1"] = g_temp1;
-  doc["temp2"] = g_temp2;
-  doc["lamp1"]["power"] = LampService::getLamp1().power;
-  doc["lamp2"]["power"] = LampService::getLamp2().power;
+  doc["sensors"]["dht1"]["t"] = g_temp1;
+  doc["sensors"]["dht1"]["h"] = g_hum1;
+  doc["sensors"]["dht2"]["t"] = g_temp2;
+  doc["sensors"]["dht2"]["h"] = g_hum2;
+  doc["lamps"]["lamp1"]["power"] = LampService::getLamp1().power;
+  doc["lamps"]["lamp2"]["power"] = LampService::getLamp2().power;
   doc["power_master"] = LampService::getMaster();
-  doc["setpoint"] = g_setpoint;
+  doc["option"]["dht_setpoint"] = g_setpoint;
   doc["ts"] = millis();
 
   String out;
@@ -177,7 +181,7 @@ void loop() {
   }
 
   // Baca sensor sekali per loop
-  bool ok = SensorService::readTemps(g_temp1, g_temp2);
+  bool ok = SensorService::readTemps(g_temp1, g_temp2, g_hum1, g_hum2);
 //   if (!ok) {
 //     Logger::warn("Failed to read temperature sensors");
 //   }

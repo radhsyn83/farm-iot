@@ -9,6 +9,8 @@ PubSubClient MqttService::client(MQTT_HOST, MQTT_PORT, MqttService::callback, Mq
 MqttMessageHandler MqttService::onMessage = nullptr;
 unsigned long MqttService::lastReconnectAttempt = 0;
 uint32_t MqttService::reconnectBackoffMs = 1000;  // start 1s, max 30s
+unsigned long MqttService::lastHeartbeat = 0;
+const unsigned long HEARTBEAT_INTERVAL = 30000; // 30 detik
 
 void MqttService::begin(MqttMessageHandler handler) {
   onMessage = handler;
@@ -49,6 +51,12 @@ void MqttService::loop() {
     }
   } else {
     client.loop(); // proses keep-alive & callback
+
+    // 🔹 Heartbeat
+    if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
+      lastHeartbeat = millis();
+      publishHeartbeat();
+    }
   }
 }
 
@@ -117,3 +125,25 @@ void MqttService::reconnect() {
     Logger::warn("MQTT connect failed, rc=%d", client.state());
   }
 }
+
+void MqttService::publishHeartbeat() {
+    if (!connected()) return;
+
+    JsonDocument doc;
+    doc["device"]    = DEVICE_ID;
+    doc["ts"]        = millis();
+    doc["uptime_s"]  = millis() / 1000;
+    doc["wifi"]["ssid"] = WiFi.SSID();
+    doc["wifi"]["ip"]   = WiFi.localIP().toString();
+    doc["wifi"]["rssi"] = WiFi.RSSI();
+    doc["sys"]["heap_free"] = ESP.getFreeHeap();
+    doc["sys"]["cpu_mhz"]   = ESP.getCpuFreqMHz();
+    doc["sys"]["temp_c"]    = temperatureRead();
+    doc["fw"] = "1.0.0"; // bisa ambil dari config.h
+    doc["claimed"] = false; // atau ambil dari StateService kalau ada
+
+    String out;
+    serializeJson(doc, out);
+    publish(tHeartbeat(), out, false);
+    Logger::info("Heartbeat published: %s", out.c_str());
+  }

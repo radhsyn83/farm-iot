@@ -7,6 +7,7 @@ inline String tRoot() { return String(SITE_NS); }
 inline String tTelemetry() { return tRoot() + "/telemetry"; }
 
 inline String tState() { return tRoot() + "/state"; }
+inline String tHeartbeat() { return tRoot() + "/heartbeat"; }
 inline String tStateLamp1() { return tRoot() + "/state/lamp1"; }
 inline String tStateLamp2() { return tRoot() + "/state/lamp2"; }
 inline String tStateMaster() { return tRoot() + "/state/power_master"; }
