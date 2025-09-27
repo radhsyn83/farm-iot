@@ -3,8 +3,8 @@
 #include <Arduino.h>
 
 // ========= WiFi =========
-static const char* WIFI_SSID     = "";
-static const char* WIFI_PASSWORD = "";
+static const char* WIFI_SSID     = "Annura";
+static const char* WIFI_PASSWORD = "qwerty1234";
 // static const char* WIFI_SSID     = "WIFI-SYN";
 // static const char* WIFI_PASSWORD = "qwerty1234";
 
@@ -27,7 +27,7 @@ static const uint32_t TELEMETRY_MS = 5000;
 enum class LampMode { RELAY, PWM_DC, ROBOTDYN_AC };
 
 // Pilih mode di sini (ganti sesuai kebutuhan)
-static const LampMode LAMP_MODE = LampMode::ROBOTDYN_AC;
+static const LampMode LAMP_MODE = LampMode::RELAY;
 
 // ========= API =========
 static const char* API_BASE_URL   = "http://192.168.1.20:8000";

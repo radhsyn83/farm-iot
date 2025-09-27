@@ -28,25 +28,37 @@ static unsigned long btnPressStart = 0;
 static void handleMqttMessage(const String& topic, const String& payload) {
   Logger::info("Got MQTT message %s: %s", topic.c_str(), payload.c_str());
 
-  // gunakan DynamicJsonDocument biar fleksibel
   DynamicJsonDocument doc(384);
   DeserializationError err = deserializeJson(doc, payload);
 
-  if (err) {
+  if (err && payload != "toggle") {
     Logger::warn("JSON parse error (%s): %s", err.c_str(), payload.c_str());
     return;
   }
 
   // ====== Lamp 1 ======
   if (topic == tCmdLamp1()) {
+    bool toggle = false;
     float p = NAN;
-    if (doc.is<JsonObject>() && !doc["power"].isNull()) {
-      p = doc["power"].as<float>();
+
+    if (payload == "toggle") {
+      toggle = true;
+    } else if (doc.is<JsonObject>()) {
+      if (!doc["toggle"].isNull() && doc["toggle"].as<bool>()) {
+        toggle = true;
+      } else if (!doc["power"].isNull()) {
+        p = doc["power"].as<float>();
+      }
     } else if (doc.is<float>() || doc.is<int>() || doc.is<double>()) {
       p = doc.as<float>();
     }
 
-    if (!isnan(p)) {
+    if (toggle) {
+      float current = LampService::getLamp1().power;
+      float newPower = (current >= 0.5f) ? 0.0f : 1.0f;
+      LampService::setLamp1(newPower);
+      Logger::info("Lamp1 toggled to %.2f", newPower);
+    } else if (!isnan(p)) {
       p = constrain(p, 0.0f, 1.0f);
       LampService::setLamp1(p);
       Logger::info("Lamp1 set to %.2f", p);
@@ -55,14 +67,27 @@ static void handleMqttMessage(const String& topic, const String& payload) {
 
   // ====== Lamp 2 ======
   else if (topic == tCmdLamp2()) {
+    bool toggle = false;
     float p = NAN;
-    if (doc.is<JsonObject>() && !doc["power"].isNull()) {
-      p = doc["power"].as<float>();
+
+    if (payload == "toggle") {
+      toggle = true;
+    } else if (doc.is<JsonObject>()) {
+      if (!doc["toggle"].isNull() && doc["toggle"].as<bool>()) {
+        toggle = true;
+      } else if (!doc["power"].isNull()) {
+        p = doc["power"].as<float>();
+      }
     } else if (doc.is<float>() || doc.is<int>() || doc.is<double>()) {
       p = doc.as<float>();
     }
 
-    if (!isnan(p)) {
+    if (toggle) {
+      float current = LampService::getLamp2().power;
+      float newPower = (current >= 0.5f) ? 0.0f : 1.0f;
+      LampService::setLamp2(newPower);
+      Logger::info("Lamp2 toggled to %.2f", newPower);
+    } else if (!isnan(p)) {
       p = constrain(p, 0.0f, 1.0f);
       LampService::setLamp2(p);
       Logger::info("Lamp2 set to %.2f", p);
@@ -73,10 +98,17 @@ static void handleMqttMessage(const String& topic, const String& payload) {
   else if (topic == tCmdPowerMaster()) {
     bool on = false;
     bool valid = false;
+    bool toggle = false;
 
-    if (doc.is<JsonObject>() && !doc["on"].isNull()) {
-      on = doc["on"].as<bool>();
-      valid = true;
+    if (payload == "toggle") {
+      toggle = true;
+    } else if (doc.is<JsonObject>()) {
+      if (!doc["on"].isNull()) {
+        on = doc["on"].as<bool>();
+        valid = true;
+      } else if (!doc["toggle"].isNull() && doc["toggle"].as<bool>()) {
+        toggle = true;
+      }
     } else if (doc.is<bool>()) {
       on = doc.as<bool>();
       valid = true;
@@ -85,7 +117,11 @@ static void handleMqttMessage(const String& topic, const String& payload) {
       valid = true;
     }
 
-    if (valid) {
+    if (toggle) {
+      bool current = LampService::getMaster();
+      LampService::setMaster(!current);
+      Logger::info("Master toggled to %s", !current ? "OFF" : "ON");
+    } else if (valid) {
       LampService::setMaster(on);
       Logger::info("Master set to %s", on ? "ON" : "OFF");
     }
@@ -139,15 +175,18 @@ void setup() {
 
   // (Opsional) tombol reset
   pinMode(RESET_BTN_PIN, INPUT_PULLUP);
+  pinMode(WIFI_STATE, OUTPUT);
+  digitalWrite(WIFI_STATE, LOW); // indikator WiFi mati
 
   // Urutan init:
-  // 1) WiFi (akan coba kredensial tersimpan, kalau gagal -> provisioning AP)
-  WiFiService::begin();
 
   // 2) State/sensor/actuator
   StateService::begin();
   SensorService::begin();
   LampService::begin();
+  
+  // 1) WiFi (akan coba kredensial tersimpan, kalau gagal -> provisioning AP)
+  WiFiService::begin();
 
   // 3) Load setpoint tersimpan
   g_setpoint = StateService::loadSetpoint();
@@ -161,6 +200,12 @@ void setup() {
 void loop() {
   // Penting: supaya HTTP provisioning jalan
   WiFiService::loop();
+
+  if (WiFiService::isConnected()) {
+    digitalWrite(WIFI_STATE, HIGH); // indikator WiFi connected
+  } else {
+    digitalWrite(WIFI_STATE, LOW); // indikator WiFi mati
+  }
 
   // MQTT loop (reconnect otomatis kalau WiFi sudah connected)
   if (WiFiService::isConnected() && !MqttService::connected()) {
@@ -190,11 +235,11 @@ void loop() {
   if (millis() - lastTelemetry >= TELEMETRY_MS) {
     lastTelemetry = millis();
 
-    // if (WiFiService::hasInternetPing()) {
-    //   Logger::info("Internet access OK");
-    // } else {
-    //   Logger::warn("No internet access");
-    // }
+    if (WiFiService::hasInternetPing()) {
+      Logger::info("Internet access OK");
+    } else {
+      Logger::warn("No internet access");
+    }
 
     publishTelemetry();
   }

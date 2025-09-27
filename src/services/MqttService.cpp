@@ -100,6 +100,12 @@ void MqttService::reconnect() {
   // jadi pastikan MQTT_HOST adalah hostname (bukan IP) — sudah benar di config.h.
 
   // Last-Will & KeepAlive
+  JsonDocument doc;
+  doc["state"]    = "offline";
+
+  String out;
+  serializeJson(doc, out);
+
   bool ok = client.connect(
     DEVICE_ID,             // clientId
     MQTT_USER,             // username
@@ -107,8 +113,8 @@ void MqttService::reconnect() {
     tState().c_str(),      // willTopic
     1,                     // willQos (PubSubClient: hanya dipakai untuk LWT)
     true,                  // willRetain
-    "offline",             // willMessage
-    20                     // keepAlive (detik)
+    out.c_str(),             // willMessage
+    0                     // keepAlive (detik)
   );
 
   if (ok) {
@@ -120,7 +126,13 @@ void MqttService::reconnect() {
     subscribeTopic(tCmdSetpoint());
 
     // Publish ONLINE state (retained)
-    publish(tState(), "online", true);
+    JsonDocument doc;
+    doc["state"]    = "online";
+
+    String out;
+    serializeJson(doc, out);
+
+    publish(tState(), out, true);
   } else {
     Logger::warn("MQTT connect failed, rc=%d", client.state());
   }

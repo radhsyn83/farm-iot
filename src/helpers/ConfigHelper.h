@@ -23,6 +23,8 @@ public:
   static void saveBool(const char* key, bool value);
   static bool loadBool(const char* key, bool def = false);
 
+  static void remove(const char* key);
+
 private:
   static Preferences prefs;
   static bool _started;

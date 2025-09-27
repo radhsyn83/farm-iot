@@ -3,6 +3,7 @@
 #include "../pins.h"
 #include "../config.h"
 #include "StateService.h"
+#include <RBDdimmer.h>
 
 struct LampState {
   float power = 0.0f; // 0.0–1.0

@@ -17,8 +17,8 @@ static const int PWM_RES  = 8;
 
 // ===== RobotDyn AC Dimmer =====
 #if __has_include(<RBDdimmer.h>)
-static dimmerLamp dimmer1(ZC_PIN, LAMP1_PIN);
-static dimmerLamp dimmer2(ZC_PIN, LAMP2_PIN);
+static dimmerLamp dimmer1(LAMP1_PIN, ZC_PIN);
+static dimmerLamp dimmer2(LAMP2_PIN, ZC_PIN);
 #endif
 
 void LampService::setupPin(uint8_t pin) {
@@ -31,13 +31,9 @@ void LampService::setupPin(uint8_t pin) {
       ledcAttachPin(LAMP2_PIN, PWM_CHANNEL_2);
     }
   } else if (LAMP_MODE == LampMode::RELAY) {
+    Logger::info("Setting up RELAY pin %d", pin);
     pinMode(pin, OUTPUT);
-    digitalWrite(pin, LOW);
-  }
-
-  if (MASTER_RELAY_PIN != 255) {
-    pinMode(MASTER_RELAY_PIN, OUTPUT);
-    digitalWrite(MASTER_RELAY_PIN, HIGH);
+    digitalWrite(pin, HIGH);
   }
 }
 
@@ -54,6 +50,7 @@ void LampService::restoreState() {
 
   apply(LAMP1_PIN, l1.power);
   apply(LAMP2_PIN, l2.power);
+  apply(MASTER_RELAY_PIN, masterOn ? 1.0f : 0.0f);
 
   Logger::info("Restored state L1=%.2f L2=%.2f Master=%d",
                l1.power, l2.power, masterOn);
@@ -68,6 +65,8 @@ void LampService::begin() {
   } else {
     setupPin(LAMP1_PIN);
     setupPin(LAMP2_PIN);
+    if (MASTER_RELAY_PIN != 255)
+      setupPin(MASTER_RELAY_PIN);
   }
   restoreState();
 }
@@ -79,6 +78,7 @@ void LampService::apply(uint8_t pin, float power) {
   if (LAMP_MODE == LampMode::ROBOTDYN_AC) {
   #if __has_include(<RBDdimmer.h>)
     int percent = int(power * 100);
+    // dimmer1.setPower(percent);
     if (pin == LAMP1_PIN) dimmer1.setPower(percent);
     else if (pin == LAMP2_PIN) dimmer2.setPower(percent);
   #endif
@@ -87,14 +87,16 @@ void LampService::apply(uint8_t pin, float power) {
     if (pin == LAMP1_PIN) ledcWrite(PWM_CHANNEL_1, duty);
     else if (pin == LAMP2_PIN) ledcWrite(PWM_CHANNEL_2, duty);
   } else { // RELAY
+    Logger::info("Relay pin %d set to %s", pin, (power >= 0.5f) ? "LOW" : "HIGH");
     digitalWrite(pin, (power >= 0.5f) ? HIGH : LOW);
   }
 }
 
 void LampService::setMaster(bool on) {
   masterOn = on;
+  Logger::info("Master set to %s", on ? "ON" : "OFF");
   if (MASTER_RELAY_PIN != 255)
-    digitalWrite(MASTER_RELAY_PIN, on ? LOW : HIGH);
+    digitalWrite(MASTER_RELAY_PIN, on ? HIGH : LOW);
 
   apply(LAMP1_PIN, l1.power);
   apply(LAMP2_PIN, l2.power);
