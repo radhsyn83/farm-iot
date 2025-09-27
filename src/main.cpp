@@ -151,12 +151,31 @@ static void publishTelemetry() {
 
   JsonDocument doc;
   doc["device"] = DEVICE_ID;
-  doc["sensors"]["dht1"]["t"] = g_temp1;
-  doc["sensors"]["dht1"]["h"] = g_hum1;
-  doc["sensors"]["dht2"]["t"] = g_temp2;
-  doc["sensors"]["dht2"]["h"] = g_hum2;
-  doc["lamps"]["lamp1"]["power"] = LampService::getLamp1().power;
-  doc["lamps"]["lamp2"]["power"] = LampService::getLamp2().power;
+
+  // Sensor DHT array
+  JsonArray sensors = doc.createNestedArray("sensors");
+
+  JsonObject s1 = sensors.createNestedObject();
+  s1["id"] = "dht1";
+  s1["t"] = g_temp1;
+  s1["h"] = g_hum1;
+
+  JsonObject s2 = sensors.createNestedObject();
+  s2["id"] = "dht2";
+  s2["t"] = g_temp2;
+  s2["h"] = g_hum2;
+
+  // Lamps array
+  JsonArray lamps = doc.createNestedArray("lamps");
+
+  JsonObject l1 = lamps.createNestedObject();
+  l1["id"] = "lamp1";
+  l1["power"] = LampService::getLamp1().power;
+
+  JsonObject l2 = lamps.createNestedObject();
+  l2["id"] = "lamp2";
+  l2["power"] = LampService::getLamp2().power;
+
   doc["power_master"] = LampService::getMaster();
   doc["option"]["dht_setpoint"] = g_setpoint;
   doc["ts"] = millis();
@@ -167,6 +186,7 @@ static void publishTelemetry() {
 
   Logger::info("Telemetry published: %s", out.c_str());
 }
+
 
 // ========== SETUP ==========
 void setup() {
