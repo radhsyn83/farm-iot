@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include "config.h"
 
-inline String tRoot() { return String(SITE_NS); }
+inline String tRoot() { return String(SITE_NS) + "/" + String(DEVICE_ID); }
 
 inline String tTelemetry() { return tRoot() + "/telemetry"; }
 

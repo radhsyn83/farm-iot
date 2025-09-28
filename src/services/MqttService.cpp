@@ -23,10 +23,25 @@ void MqttService::begin(MqttMessageHandler handler) {
   client.setKeepAlive(20);
   client.setSocketTimeout(5);  // detik
 
+  configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov"); // GMT+7
+
+
   // Note: kalau kamu pakai konstruktor tanpa host/port, bisa panggil:
   // client.setServer(MQTT_HOST, MQTT_PORT);
   // client.setCallback(MqttService::callback);
 }
+
+String getTimeISO8601() {
+  time_t now;
+  struct tm timeinfo;
+  char buf[32];
+
+  time(&now);
+  localtime_r(&now, &timeinfo);
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S%z", &timeinfo);
+  return String(buf);
+}
+
 
 void MqttService::loop() {
   // Jangan coba MQTT kalau Wi-Fi belum connect
@@ -145,6 +160,7 @@ void MqttService::publishHeartbeat() {
     doc["device"]    = DEVICE_ID;
     doc["ts"]        = millis();
     doc["uptime_s"]  = millis() / 1000;
+    doc["last_updated"] = getTimeISO8601();  // 🆕 Waktu update
     doc["wifi"]["ssid"] = WiFi.SSID();
     doc["wifi"]["ip"]   = WiFi.localIP().toString();
     doc["wifi"]["rssi"] = WiFi.RSSI();

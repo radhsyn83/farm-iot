@@ -14,7 +14,7 @@ static const uint16_t MQTT_PORT = 8883;
 static const char* MQTT_USER = "radhsyn83";   // optional
 static const char* MQTT_PASS = "Sense324";   // optional
 static const char* DEVICE_ID = "doc-kandang-01";
-static const char* SITE_NS   = "esp32/doc1";
+static const char* SITE_NS   = "esp32";
 
 // ========= Telemetry Interval =========
 static const uint32_t TELEMETRY_MS = 5000;
