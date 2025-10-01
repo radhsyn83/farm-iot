@@ -1,177 +1,228 @@
 #include "MqttService.h"
-#include "../config.h"
+#include "../config.h"          // DEVICE_ID, MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS
 #include "../helpers/Logger.h"
-#include "WiFiService.h"    // <— supaya bisa cek WiFiService::isConnected()
+#include "WiFiService.h"
+#include "LampService.h"
+#include "StateService.h"
 
-// ===== Static members =====
-WiFiClientSecure MqttService::wifiClient;
-PubSubClient MqttService::client(MQTT_HOST, MQTT_PORT, MqttService::callback, MqttService::wifiClient);
+#ifndef USE_TLS
+#define USE_TLS 1               // set 0 kalau broker non-TLS
+#endif
+
+// ===== Statics =====
+AsyncMqttClient MqttService::client;
+Ticker MqttService::reconnectTimer;
+Ticker MqttService::heartbeatTimer;
 MqttMessageHandler MqttService::onMessage = nullptr;
-unsigned long MqttService::lastReconnectAttempt = 0;
-uint32_t MqttService::reconnectBackoffMs = 1000;  // start 1s, max 30s
-unsigned long MqttService::lastHeartbeat = 0;
-const unsigned long HEARTBEAT_INTERVAL = 30000; // 30 detik
 
+// ===== Topics util =====
+String MqttService::tBase()        { return "esp32/" + String(DEVICE_ID) + "/"; }
+String MqttService::tState()       { return tBase() + "status/online"; }
+String MqttService::tHeartbeat()   { return tBase() + "heartbeat"; }
+String MqttService::tCmdGet()      { return tBase() + "cmd/get"; }
+String MqttService::tDesiredNS()   { return tBase() + "desired/"; }
+String MqttService::tReportedNS()  { return tBase() + "reported/"; }
+
+// ===== Internal helpers =====
+void MqttService::scheduleReconnect(uint32_t ms) {
+  reconnectTimer.detach();
+  reconnectTimer.once_ms(ms, []() { MqttService::reconnect(); });
+}
+
+void MqttService::onWifiReady() {
+  if (WiFiService::isConnected() && !client.connected()) {
+    reconnect();
+  }
+}
+
+// ===== Public API =====
 void MqttService::begin(MqttMessageHandler handler) {
   onMessage = handler;
 
-  wifiClient.setInsecure();
+  // TLS
+#if USE_TLS
+  client.setSecure(true);
+  // Kalau tidak punya CA / pakai server publik, pakai insecure:
+  client.setInsecure(true);
+#else
+  client.setSecure(false);
+#endif
 
+  // Broker & identitas
+  client.setServer(MQTT_HOST, MQTT_PORT);
+  client.setClientId(DEVICE_ID);
+  if (strlen(MQTT_USER)) client.setCredentials(MQTT_USER, MQTT_PASS);
 
-  // PubSubClient tuning
-  client.setBufferSize(2048);  // jika payload telemetry bisa “gemuk”
+  // Clean Session & KeepAlive
+  client.setCleanSession(false);   // sesi persisten
   client.setKeepAlive(20);
-  client.setSocketTimeout(5);  // detik
 
-  configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov"); // GMT+7
+  // LWT: offline (retained, QoS1)
+  {
+    StaticJsonDocument<64> will;
+    will["state"] = "offline";
+    String s; serializeJson(will, s);
+    client.setWill(tState().c_str(), 1 /*QoS*/, true /*retain*/, s.c_str(), s.length());
+  }
 
+  // Callbacks
+  client.onConnect(onConnect);
+  client.onDisconnect(onDisconnect);
+  client.onMessage(onMessageCb);
 
-  // Note: kalau kamu pakai konstruktor tanpa host/port, bisa panggil:
-  // client.setServer(MQTT_HOST, MQTT_PORT);
-  // client.setCallback(MqttService::callback);
+  // Kick connect kalau WiFi sudah siap
+  onWifiReady();
+
+  // Heartbeat timer – akan diaktifkan setelah connect
+  heartbeatTimer.detach();
 }
-
-String getTimeISO8601() {
-  time_t now;
-  struct tm timeinfo;
-  char buf[32];
-
-  time(&now);
-  localtime_r(&now, &timeinfo);
-  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S%z", &timeinfo);
-  return String(buf);
-}
-
 
 void MqttService::loop() {
-  // Jangan coba MQTT kalau Wi-Fi belum connect
-  if (!WiFiService::isConnected()) {
-    // reset backoff biar cepat coba lagi ketika Wi-Fi balik normal
-    reconnectBackoffMs = 1000;
-    return;
-  }
-
-  if (!client.connected()) {
-    unsigned long now = millis();
-    if (now - lastReconnectAttempt >= reconnectBackoffMs) {
-      lastReconnectAttempt = now;
-      reconnect();
-      // Exponential backoff (maks 30s) + jitter kecil (0–200ms)
-      if (!client.connected()) {
-        reconnectBackoffMs = min<uint32_t>(reconnectBackoffMs * 2, 30000);
-        reconnectBackoffMs += (uint32_t)random(0, 200);
-      } else {
-        reconnectBackoffMs = 1000; // reset kalau sukses
-      }
-    }
-  } else {
-    client.loop(); // proses keep-alive & callback
-
-    // 🔹 Heartbeat
-    if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
-      lastHeartbeat = millis();
-      publishHeartbeat();
-    }
-  }
+  // Async — tidak perlu apa-apa. Tetap disediakan agar kompatibel.
 }
 
-bool MqttService::connected() { return client.connected(); }
-
-void MqttService::publish(const String& topic, const String& payload, bool retain) {
-  if (connected()) {
-    // PubSubClient hanya QoS0 untuk publish; pastikan payload < bufferSize
-    if (!client.publish(topic.c_str(), payload.c_str(), retain)) {
-      Logger::warn("MQTT publish failed (topic=%s, len=%u)", topic.c_str(), payload.length());
-    }
-  }
-}
-
-void MqttService::subscribeTopic(const String& topic) {
-  if (connected()) {
-    if (client.subscribe(topic.c_str())) {
-      Logger::info("MQTT subscribed: %s", topic.c_str());
-    } else {
-      Logger::warn("MQTT subscribe failed: %s", topic.c_str());
-    }
-  }
-}
-
-void MqttService::callback(char* topic, byte* payload, unsigned int length) {
-  String t(topic);
-  String pl;
-  pl.reserve(length);
-  for (unsigned int i = 0; i < length; i++) pl += (char)payload[i];
-
-  Logger::info("MQTT msg on %s: %s", t.c_str(), pl.c_str());
-  if (onMessage) onMessage(t, pl);
+bool MqttService::connected() {
+  return client.connected();
 }
 
 void MqttService::reconnect() {
-  Logger::info("Attempting MQTT TLS connection to %s:%d ...", MQTT_HOST, MQTT_PORT);
+  if (!WiFiService::isConnected()) {
+    scheduleReconnect(1000);
+    return;
+  }
+  Logger::info("MQTT connecting to %s:%d (AsyncMqttClient)...", MQTT_HOST, MQTT_PORT);
+  client.connect();
+}
 
-  // (Opsional) SNI—kebanyakan broker modern butuh ini aktif
-  wifiClient.setHandshakeTimeout(15);
-  // WiFiClientSecure di ESP32 set SNI otomatis sesuai host yang dipakai di connect(),
-  // jadi pastikan MQTT_HOST adalah hostname (bukan IP) — sudah benar di config.h.
+// ===== MQTT Callbacks =====
+void MqttService::onConnect(bool sessionPresent) {
+  Logger::info("MQTT connected (sessionPresent=%d)", sessionPresent);
 
-  // Last-Will & KeepAlive
-  JsonDocument doc;
-  doc["state"]    = "offline";
+  // 1) Subscribe namespace dulu (QoS1)
+  subscribeTopic(tDesiredNS() + "#", 1);
+  subscribeTopic(tBase() + "cmd/#",    1);
 
-  String out;
-  serializeJson(doc, out);
+  // 2) Birth online (retained, QoS1)
+  {
+    StaticJsonDocument<64> birth;
+    birth["state"] = "online";
+    String s; serializeJson(birth, s);
+    publish(tState(), s, /*retain=*/true, /*qos=*/1);
+  }
 
-  bool ok = client.connect(
-    DEVICE_ID,             // clientId
-    MQTT_USER,             // username
-    MQTT_PASS,             // password
-    tState().c_str(),      // willTopic
-    1,                     // willQos (PubSubClient: hanya dipakai untuk LWT)
-    true,                  // willRetain
-    out.c_str(),             // willMessage
-    0                     // keepAlive (detik)
-  );
+  // 3) Request sync desired (fallback)
+  publish(tCmdGet(), "", /*retain=*/false, /*qos=*/1);
 
-  if (ok) {
-    Logger::info("MQTT connected");
-    // Subscribe channel command
-    subscribeTopic(tCmdLamp1());
-    subscribeTopic(tCmdLamp2());
-    subscribeTopic(tCmdPowerMaster());
-    subscribeTopic(tCmdSetpoint());
+  // 4) Start heartbeat timer (30s)
+  heartbeatTimer.detach();
+  heartbeatTimer.once_ms(1000, [](){ MqttService::publishHeartbeat(); }); // kick awal
+  heartbeatTimer.attach_ms(30000, [](){ MqttService::publishHeartbeat(); });
+}
 
-    // Publish ONLINE state (retained)
-    JsonDocument doc;
-    doc["state"]    = "online";
+void MqttService::onDisconnect(AsyncMqttClientDisconnectReason reason) {
+  Logger::warn("MQTT disconnected (reason=%d)", (int)reason);
+  heartbeatTimer.detach();
 
-    String out;
-    serializeJson(doc, out);
+  // Backoff sederhana
+  static uint32_t backoff = 1000;           // 1s
+  scheduleReconnect(backoff);
+  backoff = min<uint32_t>(backoff * 2, 30000);
+}
 
-    publish(tState(), out, true);
-  } else {
-    Logger::warn("MQTT connect failed, rc=%d", client.state());
+void MqttService::onMessageCb(char* topic, char* payload,
+                              AsyncMqttClientMessageProperties props,
+                              size_t len, size_t index, size_t total) {
+  // payload bisa chunked; kita sambung manual
+  static String bufTopic;
+  static String bufPayload;
+
+  if (index == 0) {
+    bufTopic = String(topic);
+    bufPayload.reserve(total);
+    bufPayload = "";
+  }
+  bufPayload.concat(String(payload).substring(0, len)); // safe enough for text payload
+
+  if (index + len == total) {
+    Logger::info("MQTT msg %s: %s", bufTopic.c_str(), bufPayload.c_str());
+    if (onMessage) onMessage(bufTopic, bufPayload);
+    bufPayload = "";
+    bufTopic = "";
   }
 }
 
+// ===== Publish / Subscribe =====
+void MqttService::publish(const String& topic, const String& payload, bool retain, uint8_t qos) {
+  if (!client.connected()) return;
+  client.publish(topic.c_str(), qos, retain, payload.c_str(), payload.length(), false);
+}
+
+void MqttService::subscribeTopic(const String& topic, uint8_t qos) {
+  if (!client.connected()) return;
+  auto pkid = client.subscribe(topic.c_str(), qos);
+  Logger::info("Subscribe %s (QoS=%d, pkid=%u)", topic.c_str(), qos, (unsigned)pkid);
+}
+
+// ===== Heartbeat =====
+static String ipToString(IPAddress ip) {
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+  return String(buf);
+}
+
 void MqttService::publishHeartbeat() {
-    if (!connected()) return;
+  if (!client.connected()) return;
+  StaticJsonDocument<256> d;
+  d["device"]        = DEVICE_ID;
+  d["ts"]            = millis();
+  d["uptime_s"]      = millis()/1000;
+  d["wifi"]["ssid"]  = WiFi.SSID();
+  d["wifi"]["ip"]    = ipToString(WiFi.localIP());
+  d["wifi"]["rssi"]  = WiFi.RSSI();
+  d["sys"]["heap_free"] = ESP.getFreeHeap();
+  d["sys"]["cpu_mhz"]   = ESP.getCpuFreqMHz();
+  d["sys"]["temp_c"]    = temperatureRead();
+  d["fw"]            = "1.0.0";
+  d["claimed"]       = false;
 
-    JsonDocument doc;
-    doc["device"]    = DEVICE_ID;
-    doc["ts"]        = millis();
-    doc["uptime_s"]  = millis() / 1000;
-    doc["last_updated"] = getTimeISO8601();  // 🆕 Waktu update
-    doc["wifi"]["ssid"] = WiFi.SSID();
-    doc["wifi"]["ip"]   = WiFi.localIP().toString();
-    doc["wifi"]["rssi"] = WiFi.RSSI();
-    doc["sys"]["heap_free"] = ESP.getFreeHeap();
-    doc["sys"]["cpu_mhz"]   = ESP.getCpuFreqMHz();
-    doc["sys"]["temp_c"]    = temperatureRead();
-    doc["fw"] = "1.0.0"; // bisa ambil dari config.h
-    doc["claimed"] = false; // atau ambil dari StateService kalau ada
+  String out; serializeJson(d, out);
+  publish(tHeartbeat(), out, /*retain=*/false, /*qos=*/0);  // telemetry QoS0 cukup
+  Logger::info("Heartbeat: %s", out.c_str());
+}
 
-    String out;
-    serializeJson(doc, out);
-    publish(tHeartbeat(), out, false);
-    Logger::info("Heartbeat published: %s", out.c_str());
-  }
+// ===== Reported helpers (retained, QoS1) =====
+void MqttService::publishReportedLamp1() {
+  StaticJsonDocument<64> d;
+  d["id"]    = "lamp1";
+  d["power"] = LampService::getLamp1().power;
+  String out; serializeJson(d, out);
+  publish(tReportedNS() + "lamp1", out, /*retain=*/true, /*qos=*/1);
+}
+void MqttService::publishReportedLamp2() {
+  StaticJsonDocument<64> d;
+  d["id"]    = "lamp2";
+  d["power"] = LampService::getLamp2().power;
+  String out; serializeJson(d, out);
+  publish(tReportedNS() + "lamp2", out, /*retain=*/true, /*qos=*/1);
+}
+void MqttService::publishReportedMaster() {
+  StaticJsonDocument<48> d;
+  d["on"] = LampService::getMaster();
+  String out; serializeJson(d, out);
+  publish(tReportedNS() + "power_master", out, /*retain=*/true, /*qos=*/1);
+}
+void MqttService::publishReportedSetpoint() {
+  StaticJsonDocument<48> d;
+  d["t"] = StateService::loadSetpoint();
+  String out; serializeJson(d, out);
+  publish(tReportedNS() + "setpoint", out, /*retain=*/true, /*qos=*/1);
+}
+void MqttService::publishReportedSnapshot() {
+  StaticJsonDocument<256> d;
+  d["power_master"] = LampService::getMaster();
+  JsonObject l1 = d.createNestedObject("lamp1"); l1["power"] = LampService::getLamp1().power;
+  JsonObject l2 = d.createNestedObject("lamp2"); l2["power"] = LampService::getLamp2().power;
+  d["setpoint"] = StateService::loadSetpoint();
+  String out; serializeJson(d, out);
+  publish(tReportedNS() + "snapshot", out, /*retain=*/true, /*qos=*/1);
+}
