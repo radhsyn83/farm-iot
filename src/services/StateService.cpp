@@ -53,14 +53,14 @@ void StateService::saveHyst(float c) {
 }
 
 float StateService::loadHardMin(float def) {
-  String s = ConfigHelper::load("hard_min", String(def, 2));
+  String s = ConfigHelper::load("hard_min", String(def, 2).c_str());
   return s.toFloat();
 }
 float StateService::loadHardMax(float def) {
-  String s = ConfigHelper::load("hard_max", String(def, 2));
+  String s = ConfigHelper::load("hard_max", String(def, 2).c_str());
   return s.toFloat();
 }
 float StateService::loadHyst(float def) {
-  String s = ConfigHelper::load("hyst_c", String(def, 2));
+  String s = ConfigHelper::load("hyst_c", String(def, 2).c_str());
   return s.toFloat();
 }

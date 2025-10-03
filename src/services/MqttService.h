@@ -1,52 +1,52 @@
 #pragma once
 #include <Arduino.h>
-#include <ArduinoJson.h>
-#include <AsyncMqttClient.h>
-#include <Ticker.h>
+#include <PubSubClient.h>
 
-// Callback tipe: (topic, payload)
-typedef void (*MqttMessageHandler)(const String&, const String&);
+// callback: onMessage(topic, payload)
+using MqttMessageHandler = void (*)(const String&, const String&);
 
 class MqttService {
 public:
+  // lifecycle
   static void begin(MqttMessageHandler handler);
-  static void loop();                    // no-op (async), tetap disediakan
+  static void loop();
   static bool connected();
   static void reconnect();
 
-  static void publish(const String& topic, const String& payload, bool retain=false, uint8_t qos=0);
-  static void subscribeTopic(const String& topic, uint8_t qos=1);
+  // publish/subscribe
+  static void publish(const String& topic, const String& payload, bool retain=false);
+  static void subscribeTopic(const String& topic);
 
-  static void publishHeartbeat();
+  // topics util
+  static String tBase();
+  static String tState();
+  static String tHeartbeat();
+  static String tCmdGet();
+  static String tDesiredNS();
+  static String tReportedNS();
 
-  // Reported (retained)
+  // reported helpers
   static void publishReportedLamp1();
   static void publishReportedLamp2();
   static void publishReportedMaster();
   static void publishReportedSetpoint();
   static void publishReportedSnapshot();
 
-  // Topics util
-  static String tBase();                 // esp32/<dev>/
-  static String tState();                // esp32/<dev>/status/online
-  static String tHeartbeat();            // esp32/<dev>/heartbeat
-  static String tCmdGet();               // esp32/<dev>/cmd/get
-  static String tDesiredNS();            // esp32/<dev>/desired/
-  static String tReportedNS();           // esp32/<dev>/reported/
+  // telemetry
+  static void publishHeartbeat();
 
 private:
-  static AsyncMqttClient client;
-  static Ticker reconnectTimer;
-  static Ticker heartbeatTimer;
+  static void onMqttMessage(char* topic, byte* payload, unsigned int length);
 
+  // state
+  static PubSubClient client;
   static MqttMessageHandler onMessage;
 
-  static void scheduleReconnect(uint32_t ms);
-  static void onWifiReady();             // dipanggil dari begin/loop kalau perlu
+  // reconnect policy
+  static const uint32_t RECONNECT_MS;
+  static uint32_t lastReconnectAttempt;
 
-  // Handlers
-  static void onConnect(bool sessionPresent);
-  static void onDisconnect(AsyncMqttClientDisconnectReason reason);
-  static void onMessageCb(char* topic, char* payload, AsyncMqttClientMessageProperties props,
-                          size_t len, size_t index, size_t total);
+  // heartbeat
+  static const uint32_t HEARTBEAT_MS;
+  static uint32_t lastHeartbeat;
 };

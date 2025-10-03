@@ -75,9 +75,9 @@ static bool parseFloatFlexible(const String& s, float& out) {
 
 // ===== Forward decl =====
 static void publishTelemetry();
-static void handleDesiredLamp(const String& whichLamp, const String& payload, DynamicJsonDocument& doc);
-static void handleDesiredMaster(const String& payload, DynamicJsonDocument& doc);
-static void handleDesiredSetpoint(const String& payload, DynamicJsonDocument& doc);
+static void handleDesiredLamp(const String& whichLamp, const String& payload, JsonDocument& doc);
+static void handleDesiredMaster(const String& payload, JsonDocument& doc);
+static void handleDesiredSetpoint(const String& payload, JsonDocument& doc);
 static void handleDesiredAlertConfig(const String& payload); // new
 
 // ===== MQTT message handler =====
@@ -120,7 +120,7 @@ static void handleMqttMessage(const String& topic, const String& payload) {
 }
 
 // ===== Desired handlers =====
-static void handleDesiredLamp(const String& whichLamp, const String& payload, DynamicJsonDocument& doc) {
+static void handleDesiredLamp(const String& whichLamp, const String& payload, JsonDocument& doc) {
   bool doToggle = false;
   float val = NAN;
 
@@ -160,7 +160,7 @@ static void handleDesiredLamp(const String& whichLamp, const String& payload, Dy
   else                      MqttService::publishReportedLamp2();
 }
 
-static void handleDesiredMaster(const String& payload, DynamicJsonDocument& doc) {
+static void handleDesiredMaster(const String& payload, JsonDocument& doc) {
   bool on = false; bool valid = false; bool toggle = false;
 
   if (payload == "toggle") toggle = true;
@@ -180,7 +180,7 @@ static void handleDesiredMaster(const String& payload, DynamicJsonDocument& doc)
   MqttService::publishReportedMaster();
 }
 
-static void handleDesiredSetpoint(const String& payload, DynamicJsonDocument& doc) {
+static void handleDesiredSetpoint(const String& payload, JsonDocument& doc) {
   float t = NAN;
   if (doc.is<JsonObject>() && !doc["t"].isNull())      t = doc["t"].as<float>();
   else if (doc.is<float>() || doc.is<int>() || doc.is<double>()) t = doc.as<float>();
@@ -247,8 +247,8 @@ static void publishTelemetry() {
 
   // sensors
   JsonArray sensors = d.createNestedArray("sensors");
-  JsonObject s1 = sensors.createNestedObject(); s1["id"]="dht1"; s1["t"]=g_temp1; s1["h"]=g_hum1;
-  JsonObject s2 = sensors.createNestedObject(); s2["id"]="dht2"; s2["t"]=g_temp2; s2["h"]=g_hum2;
+  JsonObject s1 = sensors.createNestedObject(); s1["id"]="dht1"; s1["t"]=isnan(g_temp1) ? 0.0 : g_temp1; s1["h"]=isnan(g_hum1) ? 0.0 : g_hum1;
+  JsonObject s2 = sensors.createNestedObject(); s2["id"]="dht2"; s2["t"]=isnan(g_temp2) ? 0.0 : g_temp2; s2["h"]=isnan(g_hum2) ? 0.0 : g_hum2;
 
   // lamps
   JsonArray lamps = d.createNestedArray("lamps");

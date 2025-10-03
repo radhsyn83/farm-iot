@@ -9,8 +9,12 @@ static const char* WIFI_PASSWORD = "qwerty1234";
 // static const char* WIFI_PASSWORD = "qwerty1234";
 
 // ========= MQTT =========
-static const char* MQTT_HOST = "f28a90877b0e429896dd24d452e4cb23.s1.eu.hivemq.cloud"; // broker
+// static const char* MQTT_HOST = "f28a90877b0e429896dd24d452e4cb23.s1.eu.hivemq.cloud"; // broker
+// static const uint16_t MQTT_PORT = 8883;
+static const char* MQTT_HOST = "emqx.radhsyn83.dev"; // broker
 static const uint16_t MQTT_PORT = 8883;
+// static const char* MQTT_HOST = "103.175.220.242"; // broker
+// static const uint16_t MQTT_PORT = 1883;
 static const char* MQTT_USER = "radhsyn83";   // optional
 static const char* MQTT_PASS = "Sense324";   // optional
 static const char* DEVICE_ID = "doc-kandang-01";
