@@ -16,3 +16,13 @@ inline String tCmdLamp1() { return tRoot() + "/cmd/lamp1"; }
 inline String tCmdLamp2() { return tRoot() + "/cmd/lamp2"; }
 inline String tCmdPowerMaster() { return tRoot() + "/cmd/power_master"; }
 inline String tCmdSetpoint() { return tRoot() + "/cmd/setpoint"; }
+
+inline String tReportedHealth() {
+  return "esp32/" + String(DEVICE_ID) + "/reported/health";
+}
+inline String tEventsSuspects() {
+  return "esp32/" + String(DEVICE_ID) + "/events/suspect_sensors";
+}
+inline String tRestartAck() {
+  return "esp32/" + String(DEVICE_ID) + "/reported/restart_ack";
+}

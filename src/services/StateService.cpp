@@ -64,3 +64,13 @@ float StateService::loadHyst(float def) {
   String s = ConfigHelper::load("hyst_c", String(def, 2).c_str());
   return s.toFloat();
 }
+bool StateService::loadFailsafeAuto(bool defval) {
+  Preferences p; p.begin("doc", true);
+  bool v = p.getBool("fs_auto", defval);
+  p.end(); return v;
+}
+void StateService::saveFailsafeAuto(bool on) {
+  Preferences p; p.begin("doc", false);
+  p.putBool("fs_auto", on);
+  p.end();
+}

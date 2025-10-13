@@ -25,6 +25,8 @@ public:
   static float  loadHardMin(float def = 20.0f);
   static float  loadHardMax(float def = 38.0f);
   static float  loadHyst(float def = 1.0f);
+  static bool loadFailsafeAuto(bool defval);
+  static void saveFailsafeAuto(bool on);
 
 private:
   static constexpr const char* NS = "state"; // namespace

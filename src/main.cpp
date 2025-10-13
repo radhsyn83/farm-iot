@@ -32,6 +32,11 @@ static const unsigned long RESET_HOLD_MS = 5000;
 #define WIFI_STATE LED_BUILTIN
 #endif
 
+// --- Suspect detection ---
+#ifndef SUSPECT_MS
+#define SUSPECT_MS 60000UL   // 60s invalid berturut-turut → suspect
+#endif
+
 // ===== Globals (sensor state) =====
 static float g_temp1 = NAN;
 static float g_temp2 = NAN;
@@ -44,10 +49,21 @@ static uint32_t lastTelemetry = 0;
 static float g_hardMin = 20.0f;
 static float g_hardMax = 38.0f;
 static float g_hystC   = 1.0f;
+static bool  g_fsAuto  = true;      // << ikut alert_config
+
+// Restart schedule
+static bool g_pendingRestart = false;
+static uint32_t g_restartAt = 0;
 
 // ===== Reset button state =====
 static bool btnPressed = false;
 static unsigned long btnPressStart = 0;
+
+// ===== Suspect state =====
+static bool     g_suspect1 = false;
+static bool     g_suspect2 = false;
+static uint32_t g_invalidStart1 = 0;
+static uint32_t g_invalidStart2 = 0;
 
 // ===== Helpers =====
 static String nowISO8601() {
@@ -73,12 +89,60 @@ static bool parseFloatFlexible(const String& s, float& out) {
   return (end && end != s.c_str());
 }
 
+// Nilai temperature valid? (0, 85, NaN dianggap invalid)
+static inline bool tempValid(float t) {
+  return isfinite(t) && t > 10.0f && t < 60.0f && t != 0.0f && t != 85.0f;
+}
+
 // ===== Forward decl =====
 static void publishTelemetry();
 static void handleDesiredLamp(const String& whichLamp, const String& payload, JsonDocument& doc);
 static void handleDesiredMaster(const String& payload, JsonDocument& doc);
 static void handleDesiredSetpoint(const String& payload, JsonDocument& doc);
-static void handleDesiredAlertConfig(const String& payload); // new
+static void handleDesiredAlertConfig(const String& payload);
+static void handleDesiredRestart(const String& payload);
+
+static void publishEvent(const char* kind, const char* status) {
+  StaticJsonDocument<192> d;
+  d["device"] = DEVICE_ID;
+  d["kind"]   = kind;   // "restart"
+  d["status"] = status; // "ack"/"done"/"error"
+  d["ts"]     = nowISO8601();
+  String out; serializeJson(d, out);
+  MqttService::publish(String("esp32/")+DEVICE_ID+"/event/"+kind, out, false);
+}
+
+static void publishEventEx(
+  const char* kind,
+  const char* status,
+  const char* sensor_id /*nullable*/ = nullptr,
+  uint32_t duration_ms = 0
+) {
+  StaticJsonDocument<256> d;
+  d["device"] = DEVICE_ID;
+  d["kind"]   = kind;       // "sensor_suspect"
+  d["status"] = status;     // "up" | "down"
+  if (sensor_id)  d["sensor_id"]  = sensor_id;   // "dht1"/"dht2"
+  if (duration_ms) d["duration_ms"] = duration_ms;
+  d["ts"]     = nowISO8601();
+
+  String out; serializeJson(d, out);
+  MqttService::publish(String("esp32/") + DEVICE_ID + "/event/" + kind, out, /*retain=*/false);
+}
+
+// Snapshot array suspects (opsional, untuk backend)
+static void publishSuspectsSnapshot(bool s1, bool s2) {
+  StaticJsonDocument<256> d;
+  d["device"] = DEVICE_ID;
+  d["kind"]   = "suspect_snapshot";
+  JsonArray arr = d.createNestedArray("suspects");
+  if (s1) { JsonObject o = arr.createNestedObject(); o["sensor_id"] = "dht1"; }
+  if (s2) { JsonObject o = arr.createNestedObject(); o["sensor_id"] = "dht2"; }
+  d["ts"] = nowISO8601();
+
+  String out; serializeJson(d, out);
+  MqttService::publish(String("esp32/") + DEVICE_ID + "/event/suspect_snapshot", out, /*retain=*/false);
+}
 
 // ===== MQTT message handler =====
 static void handleMqttMessage(const String& topic, const String& payload) {
@@ -106,7 +170,8 @@ static void handleMqttMessage(const String& topic, const String& payload) {
     else if (leaf == "lamp2")       { handleDesiredLamp("lamp2", payload, doc); return; }
     else if (leaf == "power_master"){ handleDesiredMaster(payload, doc); return; }
     else if (leaf == "setpoint")    { handleDesiredSetpoint(payload, doc); return; }
-    else if (leaf == "alert_config"){ handleDesiredAlertConfig(payload);   return; } // NEW
+    else if (leaf == "alert_config"){ handleDesiredAlertConfig(payload);   return; } 
+    else if (leaf == "restart")     { handleDesiredRestart(payload);       return; }
     return;
   }
 
@@ -116,7 +181,7 @@ static void handleMqttMessage(const String& topic, const String& payload) {
   else if (topic == tCmdPowerMaster()) { handleDesiredMaster(payload, doc); return; }
   else if (topic == tCmdSetpoint())    { handleDesiredSetpoint(payload, doc); return; }
 
-  // 3) Lainnya (opsional) dibiarkan ke app handler lain kalau ada
+  // 3) Lainnya (opsional)
 }
 
 // ===== Desired handlers =====
@@ -202,6 +267,7 @@ static void handleDesiredAlertConfig(const String& payload) {
   }
 
   bool changed = false;
+  bool changedFS = false;
 
   if (d.containsKey("setpoint")) {
     g_setpoint = d["setpoint"].as<float>();
@@ -225,6 +291,12 @@ static void handleDesiredAlertConfig(const String& payload) {
     changed = true;
   }
 
+  if (d.containsKey("failsafe_auto")) {
+    g_fsAuto = d["failsafe_auto"].as<bool>();
+    StateService::saveFailsafeAuto(g_fsAuto);
+    changedFS = true;
+  }
+
   if (changed) {
     // re-init failsafe dengan param baru
     Failsafe::Config fs;
@@ -236,16 +308,53 @@ static void handleDesiredAlertConfig(const String& payload) {
     Logger::info("alert_config applied: setpoint=%.2f, hard_min=%.2f, hard_max=%.2f, hyst=%.2f",
                  g_setpoint, g_hardMin, g_hardMax, g_hystC);
   }
+
+  if (changedFS) {
+    // publish reported snapshot kecil
+    StaticJsonDocument<160> r;
+    r["device"] = DEVICE_ID;
+    r["failsafe_auto"] = g_fsAuto;
+    r["ts"] = nowISO8601();
+    String out; serializeJson(r, out);
+    MqttService::publish(String("esp32/")+DEVICE_ID+"/reported/failsafe_auto", out, /*retain=*/true);
+    Logger::info("failsafe_auto: %s", g_fsAuto ? "true" : "false");
+  }
+}
+
+// === desired/restart: {"key":"device"|"dht1"|"dht2"}
+static void handleDesiredRestart(const String& payload) {
+  StaticJsonDocument<128> d;
+  if (deserializeJson(d, payload) != DeserializationError::Ok || d["key"].isNull()) {
+    Logger::warn("restart payload invalid: %s", payload.c_str());
+    return;
+  }
+  const String key = d["key"].as<String>();
+
+  if (key == "device") {
+    publishEvent("restart", "ack");
+    g_pendingRestart = true;
+    g_restartAt = millis() + 300;
+    return;
+  }
+
+  if (key == "dht1" || key == "dht2") {
+    publishEvent("restart", "ack");
+    SensorService::rebeginOne(key.c_str()); // implement per sensor
+    publishEvent("restart", "done");
+    return;
+  }
+
+  Logger::warn("restart key unknown: %s", key.c_str());
 }
 
 // ===== Telemetry publisher =====
 static void publishTelemetry() {
   if (!MqttService::connected()) return;
 
-  StaticJsonDocument<512> d; // dinaikkan sedikit
+  StaticJsonDocument<640> d; // dinaikkan sedikit
   d["device"] = DEVICE_ID;
 
-  // sensors
+  // sensors (publish nilai mentah/0 jika invalid—client yang abaikan)
   JsonArray sensors = d.createNestedArray("sensors");
   JsonObject s1 = sensors.createNestedObject(); s1["id"]="dht1"; s1["t"]=isnan(g_temp1) ? 0.0 : g_temp1; s1["h"]=isnan(g_hum1) ? 0.0 : g_hum1;
   JsonObject s2 = sensors.createNestedObject(); s2["id"]="dht2"; s2["t"]=isnan(g_temp2) ? 0.0 : g_temp2; s2["h"]=isnan(g_hum2) ? 0.0 : g_hum2;
@@ -264,13 +373,76 @@ static void publishTelemetry() {
   cfg["hard_max"] = g_hardMax;
   cfg["hyst"]     = g_hystC;
   cfg["dht_setpoint"] = g_setpoint;
+  cfg["failsafe_auto"] = g_fsAuto; // << NEW
+
+  // sensor_health + suspects (array of objects {id, device})
+  const bool v1 = tempValid(g_temp1);
+  const bool v2 = tempValid(g_temp2);
+  JsonObject health = d.createNestedObject("sensor_health");
+  health["valid_count"] = (int)v1 + (int)v2;
+  health["spread_c"]    = (v1 && v2) ? fabs(g_temp1 - g_temp2) : 0.0;
+
+  JsonArray suspects = health.createNestedArray("suspects");
+  if (g_suspect1) { JsonObject o = suspects.createNestedObject(); o["id"] = "dht1"; o["device"] = DEVICE_ID; }
+  if (g_suspect2) { JsonObject o = suspects.createNestedObject(); o["id"] = "dht2"; o["device"] = DEVICE_ID; }
 
   d["ts"] = millis();
   d["last_updated"] = nowISO8601();
 
   String out; serializeJson(d, out);
-  MqttService::publish(tTelemetry(), out, /*retain=*/false); // QoS0 cukup untuk telemetry
+  MqttService::publish(tTelemetry(), out, /*retain=*/false);
   Logger::info("Telemetry: %s", out.c_str());
+}
+
+
+
+// Update flag “suspect” per sensor (invalid terus ≥ SUSPECT_MS)
+static inline void updateSuspects(bool v1, bool v2) {
+  const uint32_t now = millis();
+
+  bool prev1 = g_suspect1;
+  bool prev2 = g_suspect2;
+
+  // --- dht1 ---
+  if (!v1) {
+    if (g_invalidStart1 == 0) g_invalidStart1 = now;
+    if (!g_suspect1 && (now - g_invalidStart1) >= SUSPECT_MS) {
+      g_suspect1 = true;
+      Logger::warn("[SUSPECT] dht1 -> suspect");
+      publishEventEx("sensor_suspect", "up", "dht1", /*duration_ms*/0);
+    }
+  } else {
+    if (g_suspect1) {
+      Logger::info("[SUSPECT] dht1 recovered");
+      const uint32_t dur = (g_invalidStart1 ? (now - g_invalidStart1) : 0);
+      publishEventEx("sensor_suspect", "down", "dht1", dur);
+    }
+    g_invalidStart1 = 0;
+    g_suspect1 = false;
+  }
+
+  // --- dht2 ---
+  if (!v2) {
+    if (g_invalidStart2 == 0) g_invalidStart2 = now;
+    if (!g_suspect2 && (now - g_invalidStart2) >= SUSPECT_MS) {
+      g_suspect2 = true;
+      Logger::warn("[SUSPECT] dht2 -> suspect");
+      publishEventEx("sensor_suspect", "up", "dht2", /*duration_ms*/0);
+    }
+  } else {
+    if (g_suspect2) {
+      Logger::info("[SUSPECT] dht2 recovered");
+      const uint32_t dur = (g_invalidStart2 ? (now - g_invalidStart2) : 0);
+      publishEventEx("sensor_suspect", "down", "dht2", dur);
+    }
+    g_invalidStart2 = 0;
+    g_suspect2 = false;
+  }
+
+  // Kirim snapshot hanya kalau ada perubahan (anti-spam)
+  if (prev1 != g_suspect1 || prev2 != g_suspect2) {
+    publishSuspectsSnapshot(g_suspect1, g_suspect2);
+  }
 }
 
 // ===== Setup / Loop =====
@@ -285,7 +457,14 @@ void setup() {
 
   // Init services
   StateService::begin();
-  SensorService::begin();
+
+ SensorService::begin();
+
+  #if SENSOR_MOCK == 1
+    SensorService::enableMock(true);
+    SensorService::setMockValues(36.0f, 36.0f, 70.0f, 70.0f);
+  #endif
+
   LampService::begin();
   WiFiService::begin(); // provisioning + connect tersimpan
 
@@ -295,19 +474,21 @@ void setup() {
   g_hardMax  = StateService::loadHardMax();             // default 38.0
   g_hystC    = StateService::loadHyst();                // default 1.0
 
-  Logger::info("Loaded setpoint=%.2f hardMin=%.2f hardMax=%.2f hyst=%.2f",
-               g_setpoint, g_hardMin, g_hardMax, g_hystC);
+  g_fsAuto   = StateService::loadFailsafeAuto(/*default*/ true);
+
+  Logger::info("Loaded setpoint=%.2f hardMin=%.2f hardMax=%.2f hyst=%.2f fsAuto=%d",
+               g_setpoint, g_hardMin, g_hardMax, g_hystC, g_fsAuto);
 
   // Inisialisasi failsafe dengan nilai dari pref
   Failsafe::Config fs;
   fs.HARD_MIN = g_hardMin;
   fs.HARD_MAX = g_hardMax;
   fs.HYST     = g_hystC;
-  // (opsional) atur FS timing:
+  // (opsional) timing FS:
   // fs.NET_DEAD_MS = 30000; fs.MIN_ON_MS = 20000; fs.MIN_OFF_MS = 20000;
   Failsafe::begin(fs);
 
-  // MQTT (Async) — auto connect saat WiFi ready
+  // MQTT (Async) — auto connect saat WiFi siap
   MqttService::begin(handleMqttMessage);
 }
 
@@ -318,11 +499,11 @@ void loop() {
   // LED WiFi
   digitalWrite(WIFI_STATE, WiFiService::isConnected() ? HIGH : LOW);
 
-  // Pastikan connect MQTT saat WiFi siap (Async lib akan handle)
+  // Pastikan connect MQTT saat WiFi siap
   if (WiFiService::isConnected() && !MqttService::connected()) {
     MqttService::reconnect();
   }
-  MqttService::loop(); // no-op (kompatibilitas)
+  MqttService::loop();
 
   // Long-press reset WiFi
   if (digitalRead(RESET_BTN_PIN) == LOW) {
@@ -336,24 +517,44 @@ void loop() {
     btnPressed = false;
   }
 
-  // Read sensors
+  // ===== Read sensors =====
   (void)SensorService::readTemps(g_temp1, g_temp2, g_hum1, g_hum2);
 
-  // ===== Failsafe tick (pakai rata-rata suhu valid) =====
-  float avgT = NAN; int n = 0;
-  if (isfinite(g_temp1)) { avgT = isfinite(avgT)? (avgT + g_temp1) : g_temp1; n++; }
-  if (isfinite(g_temp2)) { avgT = isfinite(avgT)? (avgT + g_temp2) : g_temp2; n++; }
-  if (n > 1) avgT /= n;
+  // ===== Validity & Suspect tracking =====
+  const bool v1 = tempValid(g_temp1);
+  const bool v2 = tempValid(g_temp2);
+  updateSuspects(v1, v2);
 
+  // ===== Robust aggregation untuk failsafe =====
+  float avgT = NAN; // gunakan arsitektur lama Failsafe::tick(avgT,...)
+  if (v1 && v2) {
+    // dua-duanya valid → pakai rata-rata
+    avgT = (g_temp1 + g_temp2) * 0.5f;
+  } else if (v1 ^ v2) {
+    // hanya satu valid → pakai yang valid
+    avgT = v1 ? g_temp1 : g_temp2;
+  } else {
+    // tidak ada yang valid → NAN (failsafe akan hold, tidak ganti state)
+    avgT = NAN;
+  }
+
+  // ===== Failsafe tick =====
   Failsafe::tick(
     avgT,
     /*mqttOk*/ MqttService::connected(),
     /*wifiOk*/ WiFiService::isConnected()
   );
 
-  // Telemetry interval
+  // ===== Telemetry interval =====
   if (millis() - lastTelemetry >= TELEMETRY_MS) {
     lastTelemetry = millis();
     publishTelemetry();
+  }
+
+  // handle scheduled restart
+  if (g_pendingRestart && millis() >= g_restartAt) {
+    publishEvent("restart", "done");
+    delay(50);
+    ESP.restart();
   }
 }
