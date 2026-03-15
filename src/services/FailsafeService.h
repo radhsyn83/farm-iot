@@ -19,6 +19,7 @@ struct Config {
 };
 
 void begin(const Config& cfg);
+void updateConfig(const Config& cfg);  // update params without resetting mode
 void tick(float avgTemp, bool mqttOk, bool wifiOk);
 void forceOff();
 

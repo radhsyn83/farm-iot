@@ -47,3 +47,8 @@ void ConfigHelper::saveBool(const char* key, bool value) {
 bool ConfigHelper::loadBool(const char* key, bool def) {
   return prefs.getBool(key, def);
 }
+
+void ConfigHelper::remove(const char* key) {
+  prefs.remove(key);
+  Logger::info("Removed key [%s]", key);
+}

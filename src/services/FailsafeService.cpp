@@ -21,6 +21,12 @@ void begin(const Config& cfg) {
   g_lastSwitch = millis();
 }
 
+void updateConfig(const Config& cfg) {
+  CFG = cfg;
+  // Preserve current mode and timers — only update thresholds
+  Logger::info("[SAFETY] config updated (mode preserved: %d)", (int)g_mode);
+}
+
 // ======= HEATER-ONLY policy mapping =======
 // HEATING  : lampu ON (heater ON), master ON
 // COOLING  : OVERHEAT → ALL OFF, master OFF
@@ -39,22 +45,19 @@ static void applyMode(Mode m) {
   switch (g_mode) {
     case Mode::IDLE:
       LampService::setMaster(false);
-      LampService::setLamp1(0.0f);
-      LampService::setLamp2(0.0f);
+      LampService::setAll(0.0f);
       Logger::info("[SAFETY] IDLE (all OFF)");
       break;
 
-    case Mode::HEATING: // dingin → heater ON
+    case Mode::HEATING:
       LampService::setMaster(true);
-      LampService::setLamp1(1.0f);
-      LampService::setLamp2(1.0f);
+      LampService::setAll(1.0f);
       Logger::warn("[SAFETY] HEATING (heater ON)");
       break;
 
-    case Mode::COOLING: // panas → semua OFF (tidak pakai kipas)
+    case Mode::COOLING:
       LampService::setMaster(false);
-      LampService::setLamp1(0.0f);
-      LampService::setLamp2(0.0f);
+      LampService::setAll(0.0f);
       Logger::warn("[SAFETY] OVERHEAT -> ALL OFF");
       break;
   }
@@ -86,24 +89,20 @@ void tick(float avgTemp, bool mqttOk, bool wifiOk) {
       break;
 
     case Mode::HEATING:
-      // keluar HEATING saat cukup hangat
-      if (avgTemp >= lowExit) {
-        applyMode(Mode::IDLE);
-      }
-      // kalau melonjak panas → OFF
+      // overheat takes priority — check FIRST
       if (avgTemp > highEnter) {
         applyMode(Mode::COOLING);
+      } else if (avgTemp >= lowExit) {
+        applyMode(Mode::IDLE);
       }
       break;
 
     case Mode::COOLING: // di kebijakan ini = ALL OFF
-      // kembali IDLE saat cukup turun
-      if (avgTemp <= highExit) {
-        applyMode(Mode::IDLE);
-      }
-      // kalau terlalu dingin, balik HEATING
+      // freeze takes priority — check FIRST
       if (avgTemp < lowEnter) {
         applyMode(Mode::HEATING);
+      } else if (avgTemp <= highExit) {
+        applyMode(Mode::IDLE);
       }
       break;
   }
@@ -113,8 +112,7 @@ void forceOff() {
   g_mode = Mode::IDLE;
   g_lastSwitch = millis();
   LampService::setMaster(false);
-  LampService::setLamp1(0.0f);
-  LampService::setLamp2(0.0f);
+  LampService::setAll(0.0f);
   Logger::info("[SAFETY] forceOff -> IDLE");
 }
 

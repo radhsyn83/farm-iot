@@ -2,27 +2,12 @@
 #include <Arduino.h>
 #include "config.h"
 
-inline String tRoot() { return String(SITE_NS) + "/" + String(DEVICE_ID); }
-
+// Base topics — lamp-specific topics are now built dynamically
+inline String tRoot()      { return String(SITE_NS) + "/" + String(DEVICE_ID); }
 inline String tTelemetry() { return tRoot() + "/telemetry"; }
-
-inline String tState() { return tRoot() + "/state"; }
+inline String tState()     { return tRoot() + "/state"; }
 inline String tHeartbeat() { return tRoot() + "/heartbeat"; }
-inline String tStateLamp1() { return tRoot() + "/state/lamp1"; }
-inline String tStateLamp2() { return tRoot() + "/state/lamp2"; }
-inline String tStateMaster() { return tRoot() + "/state/power_master"; }
-
-inline String tCmdLamp1() { return tRoot() + "/cmd/lamp1"; }
-inline String tCmdLamp2() { return tRoot() + "/cmd/lamp2"; }
-inline String tCmdPowerMaster() { return tRoot() + "/cmd/power_master"; }
-inline String tCmdSetpoint() { return tRoot() + "/cmd/setpoint"; }
 
 inline String tReportedHealth() {
-  return "esp32/" + String(DEVICE_ID) + "/reported/health";
-}
-inline String tEventsSuspects() {
-  return "esp32/" + String(DEVICE_ID) + "/events/suspect_sensors";
-}
-inline String tRestartAck() {
-  return "esp32/" + String(DEVICE_ID) + "/reported/restart_ack";
+    return "esp32/" + String(DEVICE_ID) + "/reported/health";
 }

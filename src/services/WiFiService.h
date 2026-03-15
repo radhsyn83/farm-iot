@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <ESP32Ping.h>
 #include <DNSServer.h> // captive
+#include <ESPmDNS.h>   // hostname.local
 #include "../config.h"
 #include "../helpers/Logger.h"
 
@@ -18,6 +19,7 @@ public:
   static void resetCredentials();
   static void startProvisioningAP();
   static void stopProvisioningAP();
+  static String mdnsName(); // returns e.g. "farmiot.local"
 
 private:
   // ===== STATE =====
@@ -26,6 +28,8 @@ private:
   static inline WebServer server{80};
   static inline DNSServer dns;           // captive portal
   static inline bool provisioningActive = false;
+  static inline uint8_t reconnectAttempts = 0;
+  static constexpr uint8_t MAX_ATTEMPTS_BEFORE_RESET = 10;
 
   // ===== CONST =====
   static constexpr const char* NVS_NS = "wifi";
@@ -46,19 +50,39 @@ private:
   static void handleLamp();          // "/lamp"
   static void handleCss();           // "/app.css"
 
+  // ===== Captive Portal =====
+  static void handleCaptivePortal(); // catch-all redirect → /wifi
+
   // ===== Wi-Fi API Routes =====
   static void handleScan();          // "/wifi/scan"
   static void handleProvision();     // "/wifi/provision" (POST)
   static void handleWifiStatus();    // "/wifi/status"
   static void handleWifiReset();     // "/wifi/reset" (POST)
 
-  // legacy (opsional kompatibel)
-  static void handleRoot();          // alias ke handleHome()
-  static void handleStatus();        // alias ke handleWifiStatus()
-  static void handleReset();         // alias ke handleWifiReset()
+  // ===== Peripheral Config Routes =====
+  static void handleConfigPage();    // "/config"
+  static void handleGetPeripherals(); // "/api/peripherals" (GET)
+  static void handlePostPeripherals();// "/api/peripherals" (POST)
+
+  // ===== New API & Pages =====
+  static void handleSystem();         // "/system"
+  static void handleApiStatus();      // "/api/status" (GET)
+  static void handleApiLamp();        // "/api/lamp" (POST)
+  static void handleApiMaster();      // "/api/master" (POST)
+  static void handleApiSetpoint();    // "/api/setpoint" (POST)
+  static void handleApiFailsafe();    // "/api/failsafe" (POST)
+  static void handleApiRestart();     // "/api/restart" (POST)
+
+  // legacy
+  static void handleRoot();
+  static void handleStatus();
+  static void handleReset();
 
   // ===== Utils =====
+  static void registerRoutes();
   static void startCaptiveAP();
+  static void startMdns();
+  static inline bool serverActive = false;
   static bool loadCredentials(String& ssid, String& pass);
   static void saveCredentials(const String& ssid, const String& pass);
 };

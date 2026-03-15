@@ -1,16 +1,19 @@
 #pragma once
 #include <Arduino.h>
 
-static const uint8_t WIFI_STATE = 2;
+// ====== System pins (not configurable peripherals) ======
+static const uint8_t WIFI_LED_PIN = 2;
 
-// ====== DHT PINS ======
-static const uint8_t DHT1_PIN = 12;
-static const uint8_t DHT2_PIN = 13;
-
-// ====== LAMP PINS ======
-static const uint8_t LAMP1_PIN = 25;
-static const uint8_t LAMP2_PIN = 26;
-static const uint8_t ZC_PIN = 27;
-
-// ====== Power Master ======
-static const uint8_t MASTER_RELAY_PIN = 33; // set ke 255 jika tidak dipakai
+// ====== Default peripheral pins ======
+// Used only by PeripheralManager::loadDefaults() for first-boot compatibility.
+// After first boot, config is loaded from NVS and these are ignored.
+namespace DefaultPins {
+    static constexpr uint8_t DHT1 = 4;    // was 12 (strapping pin MTDI!)
+    static constexpr uint8_t DHT2 = 13;
+    static constexpr uint8_t DHT3 = 14;
+    static constexpr uint8_t DHT4 = 16;   // was 15 (strapping pin MTDO!)
+    static constexpr uint8_t LAMP1 = 25;
+    static constexpr uint8_t LAMP2 = 26;
+    static constexpr uint8_t ZC = 27;
+    static constexpr uint8_t MASTER_RELAY = 33;
+}
