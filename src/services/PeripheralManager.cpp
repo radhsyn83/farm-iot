@@ -217,7 +217,7 @@ bool PeripheralManager::applyConfig(const PeripheralConfig& newCfg, String& err)
     // Instead, we just save the config. The caller must teardown + re-init services.
     _cfg = newCfg;
     allocatePwmChannels(_cfg);
-    _cfg.version++;
+    _cfg.version = CONFIG_VERSION_MARKER;
     saveToNvs();
 
     Logger::info("PeripheralManager: config v%u applied (%d sensors, %d lamps)",

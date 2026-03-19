@@ -9,7 +9,7 @@
 #include "../web_api_bridge.h"
 
 // ===== FW version (shown in /api/status and /system) =====
-static const char* FW_VERSION = "2.1.0";
+static const char* FW_VERSION = "2.2.0";
 
 void WiFiService::begin() {
   Logger::info("WiFiService begin()");
@@ -20,7 +20,7 @@ void WiFiService::begin() {
   if (!trySavedWifi(10000)) {
     Logger::warn("Saved WiFi failed, trying config.h SSID: %s", WIFI_SSID);
     WiFi.mode(WIFI_STA);
-    connect(WIFI_SSID, WIFI_PASSWORD);
+    // connect(WIFI_SSID, WIFI_PASSWORD);
   }
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -235,10 +235,9 @@ nav a svg{width:22px;height:22px;fill:currentColor}
 #define IC_HOME "<svg viewBox='0 0 24 24'><path d='M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1V10'/></svg>"
 #define IC_TEMP "<svg viewBox='0 0 24 24'><path d='M12 2a3 3 0 00-3 3v8.26A5 5 0 1017 17a5 5 0 00-2-3.74V5a3 3 0 00-3-3z'/></svg>"
 #define IC_LAMP "<svg viewBox='0 0 24 24'><path d='M9 21h6M12 3a6 6 0 014 10.47V17a1 1 0 01-1 1H9a1 1 0 01-1-1v-3.53A6 6 0 0112 3z'/></svg>"
-#define IC_SYS  "<svg viewBox='0 0 24 24'><path d='M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z'/></svg>"
-#define IC_CFG  "<svg viewBox='0 0 24 24'><path d='M4 6h16M4 12h16M4 18h16'/></svg>"
+#define IC_SET  "<svg viewBox='0 0 24 24'><path d='M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z'/></svg>"
 
-// Bottom nav HTML snippet
+// Bottom nav HTML snippet — 4 tabs only
 static String navBar(const char* active) {
   String n = "<nav>";
   auto link = [&](const char* href, const char* icon, const char* label) {
@@ -246,11 +245,10 @@ static String navBar(const char* active) {
     if (strcmp(active, href) == 0) n += " class='active'";
     n += ">"; n += icon; n += label; n += "</a>";
   };
-  link("/",       IC_HOME, "Home");
-  link("/temp",   IC_TEMP, "Temp");
-  link("/lamp",   IC_LAMP, "Lamp");
-  link("/system", IC_SYS,  "System");
-  link("/config", IC_CFG,  "Config");
+  link("/",         IC_HOME, "Home");
+  link("/temp",     IC_TEMP, "Temp");
+  link("/lamp",     IC_LAMP, "Lamp");
+  link("/settings", IC_SET,  "Settings");
   n += "</nav>";
   return n;
 }
@@ -273,13 +271,14 @@ void WiFiService::handleCaptivePortal() {
 /* ========= Route registration ========= */
 void WiFiService::registerRoutes() {
   // UI pages
-  server.on("/",        HTTP_GET, handleHome);
-  server.on("/wifi",    HTTP_GET, handleWifi);
-  server.on("/temp",    HTTP_GET, handleTemp);
-  server.on("/lamp",    HTTP_GET, handleLamp);
-  server.on("/system",  HTTP_GET, handleSystem);
-  server.on("/config",  HTTP_GET, handleConfigPage);
-  server.on("/app.css", HTTP_GET, handleCss);
+  server.on("/",         HTTP_GET, handleHome);
+  server.on("/temp",     HTTP_GET, handleTemp);
+  server.on("/lamp",     HTTP_GET, handleLamp);
+  server.on("/settings", HTTP_GET, handleSettings);
+  server.on("/wifi",     HTTP_GET, handleWifi);
+  server.on("/system",   HTTP_GET, handleSystem);
+  server.on("/config",   HTTP_GET, handleConfigPage);
+  server.on("/app.css",  HTTP_GET, handleCss);
 
   // Wi-Fi API
   server.on("/wifi/scan",      HTTP_GET,  handleScan);
@@ -298,6 +297,10 @@ void WiFiService::registerRoutes() {
   server.on("/api/setpoint",  HTTP_POST, handleApiSetpoint);
   server.on("/api/failsafe",  HTTP_POST, handleApiFailsafe);
   server.on("/api/restart",   HTTP_POST, handleApiRestart);
+
+  // OTA
+  server.on("/ota",           HTTP_GET,  handleOtaPage);
+  server.on("/ota/upload",    HTTP_POST, handleOtaResult, handleOtaUpload);
 
   // Legacy
   server.on("/status", HTTP_GET, handleWifiStatus);
@@ -691,13 +694,69 @@ refresh();setInterval(refresh,5000);
 }
 
 /* ========================================================================= */
+/*                       SETTINGS HUB (/settings)                            */
+/* ========================================================================= */
+void WiFiService::handleSettings() {
+  String html = pageHead("Settings");
+  html += "<div class='page'>";
+  html += "<div class='card'><h1>Settings</h1></div>";
+
+  // Menu items — styled as a list of links
+  html += "<div class='list'>";
+
+  // WiFi
+  html += "<a href='/wifi' class='item' style='text-decoration:none;color:var(--text)'>";
+  html += "<div class='left'><b>WiFi</b><div class='badge'>Connect, scan, reset WiFi</div></div>";
+  html += "<span style='color:var(--muted);font-size:18px'>&rsaquo;</span></a>";
+
+  // System
+  html += "<a href='/system' class='item' style='text-decoration:none;color:var(--text)'>";
+  html += "<div class='left'><b>System</b><div class='badge'>Device info, restart, network</div></div>";
+  html += "<span style='color:var(--muted);font-size:18px'>&rsaquo;</span></a>";
+
+  // Peripherals
+  html += "<a href='/config' class='item' style='text-decoration:none;color:var(--text)'>";
+  html += "<div class='left'><b>Peripherals</b><div class='badge'>Sensors, lamps, pins config</div></div>";
+  html += "<span style='color:var(--muted);font-size:18px'>&rsaquo;</span></a>";
+
+  // OTA
+  html += "<a href='/ota' class='item' style='text-decoration:none;color:var(--text)'>";
+  html += "<div class='left'><b>OTA Update</b><div class='badge'>Upload firmware over WiFi</div></div>";
+  html += "<span style='color:var(--muted);font-size:18px'>&rsaquo;</span></a>";
+
+  html += "</div>";
+
+  // Quick status
+  html += R"HTML(
+<div id='qstat'></div>
+<script>
+const $=id=>document.getElementById(id);
+fetch('/api/status').then(r=>r.json()).then(d=>{
+  const s=d.system;
+  let h="<div class='card' style='margin-top:4px'>";
+  h+="<div class='sys-row'><span class='k'>Firmware</span><span class='v'>"+s.fw+"</span></div>";
+  h+="<div class='sys-row'><span class='k'>WiFi</span><span class='v'>"+(s.wifi_ssid||'Not connected')+"</span></div>";
+  h+="<div class='sys-row'><span class='k'>MQTT</span><span class='v'>"+(s.mqtt?"<span class='pill ok'>Connected</span>":"<span class='pill danger'>Offline</span>")+"</span></div>";
+  h+="<div class='sys-row'><span class='k'>Heap</span><span class='v'>"+(s.heap/1024).toFixed(0)+" KB</span></div>";
+  h+="</div>";
+  $('qstat').innerHTML=h;
+}).catch(()=>{});
+</script>
+)HTML";
+
+  html += navBar("/settings");
+  html += "</div></body></html>";
+  server.send(200, "text/html; charset=utf-8", html);
+}
+
+/* ========================================================================= */
 /*                        SYSTEM PAGE (/system)                              */
 /* ========================================================================= */
 void WiFiService::handleSystem() {
   String html = pageHead("System");
   html += "<div class='page'>";
   html += "<div id='content'><div class='card'><div class='badge'>Loading...</div></div></div>";
-  html += navBar("/system");
+  html += navBar("/settings");
   html += R"HTML(
 <script>
 const $=id=>document.getElementById(id);
@@ -770,7 +829,7 @@ void WiFiService::handleWifi() {
   <div id='msg' class='alert info'>Click Scan to list networks</div>
 </div>
 )HTML";
-  html += navBar("/wifi");
+  html += navBar("/settings");
   html += R"HTML(
 <script>
 const $=id=>document.getElementById(id);
@@ -863,7 +922,7 @@ void WiFiService::handleConfigPage() {
   <div class='row'><button class='btn' onclick='save()'>Save & Apply</button></div>
 </div>
 )HTML";
-  html += navBar("/config");
+  html += navBar("/settings");
   html += R"HTML(
 <script>
 let cfg={sensors:[],lamps:[],masterRelayPin:255};
@@ -1008,6 +1067,133 @@ void WiFiService::handleWifiReset() {
   server.send(200,"application/json","{\"ok\":true}");
   delay(400);
   ESP.restart();
+}
+
+/* ========================================================================= */
+/*                         OTA FIRMWARE UPDATE                               */
+/* ========================================================================= */
+void WiFiService::handleOtaPage() {
+  String html = pageHead("OTA Update");
+  html += "<div class='page'>";
+  html += "<div class='card'>";
+  html += "<h1>Firmware Update</h1>";
+  html += "<div class='badge'>Current: "; html += FW_VERSION; html += "</div>";
+  html += R"HTML(
+  <div class='section'>
+    <div class='badge'>Upload a .bin firmware file to flash OTA</div>
+    <form id='otaForm' method='POST' action='/ota/upload' enctype='multipart/form-data'>
+      <div class='row' style='margin-top:12px'>
+        <input type='file' name='firmware' accept='.bin' id='fwFile' class='input'
+               style='padding:8px;font-size:13px' required>
+      </div>
+      <div id='progress' style='display:none;margin:12px 0'>
+        <div style='background:var(--border);border-radius:8px;overflow:hidden;height:24px'>
+          <div id='bar' style='height:100%;background:var(--primary);width:0%;transition:width 0.3s;
+               display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff'>0%</div>
+        </div>
+        <div id='prgText' class='badge' style='margin-top:6px'>Uploading...</div>
+      </div>
+      <div class='row'><button type='submit' class='btn' id='btnUpload'>Upload & Flash</button></div>
+    </form>
+    <div id='msg' class='alert'></div>
+  </div>
+  <div class='alert info' style='display:block;margin-top:12px;font-size:13px'>
+    Build in PlatformIO → <code>.pio/build/esp32-tls/firmware.bin</code><br>
+    Device will restart automatically after flashing.
+  </div>
+</div>
+)HTML";
+  html += navBar("/settings");
+  html += R"HTML(
+<script>
+const $=id=>document.getElementById(id);
+$('otaForm').addEventListener('submit', function(e){
+  e.preventDefault();
+  const file=$('fwFile').files[0];
+  if(!file){alert('Select a file');return;}
+  const xhr=new XMLHttpRequest();
+  xhr.open('POST','/ota/upload',true);
+  $('progress').style.display='block';
+  $('btnUpload').disabled=true;
+  $('btnUpload').textContent='Flashing...';
+  xhr.upload.addEventListener('progress',function(e){
+    if(e.lengthComputable){
+      const pct=Math.round((e.loaded/e.total)*100);
+      $('bar').style.width=pct+'%';
+      $('bar').textContent=pct+'%';
+      $('prgText').textContent=pct<100?'Uploading... '+pct+'%':'Writing flash...';
+    }
+  });
+  xhr.onload=function(){
+    try{
+      const j=JSON.parse(xhr.responseText);
+      const el=$('msg');
+      if(j.ok){
+        el.className='alert ok';el.textContent='Success! Restarting in 2s...';
+        $('prgText').textContent='Done! Restarting...';
+      }else{
+        el.className='alert err';el.textContent='Failed: '+(j.error||'unknown');
+        $('btnUpload').disabled=false;$('btnUpload').textContent='Upload & Flash';
+      }
+    }catch(e){
+      $('msg').className='alert err';$('msg').textContent='Unexpected response';
+      $('btnUpload').disabled=false;$('btnUpload').textContent='Upload & Flash';
+    }
+  };
+  xhr.onerror=function(){
+    $('msg').className='alert err';$('msg').textContent='Connection lost (device may be restarting)';
+  };
+  const fd=new FormData();
+  fd.append('firmware',file);
+  xhr.send(fd);
+});
+</script>
+)HTML";
+  html += "</div></body></html>";
+  server.send(200, "text/html; charset=utf-8", html);
+}
+
+void WiFiService::handleOtaResult() {
+  bool ok = !Update.hasError();
+  String json = "{\"ok\":"; json += ok ? "true" : "false";
+  if (!ok) {
+    json += ",\"error\":\""; json += Update.errorString(); json += "\"";
+  }
+  json += "}";
+  server.send(ok ? 200 : 500, "application/json", json);
+  if (ok) {
+    Logger::info("[OTA] Success, restarting...");
+    delay(2000);
+    ESP.restart();
+  }
+}
+
+void WiFiService::handleOtaUpload() {
+  HTTPUpload& upload = server.upload();
+  switch (upload.status) {
+    case UPLOAD_FILE_START:
+      Logger::info("[OTA] Receiving: %s (%u bytes)", upload.filename.c_str(), upload.totalSize);
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+        Logger::error("[OTA] Begin failed: %s", Update.errorString());
+      }
+      break;
+    case UPLOAD_FILE_WRITE:
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        Logger::error("[OTA] Write failed: %s", Update.errorString());
+      }
+      break;
+    case UPLOAD_FILE_END:
+      if (Update.end(true)) {
+        Logger::info("[OTA] Flash complete: %u bytes", upload.totalSize);
+      } else {
+        Logger::error("[OTA] End failed: %s", Update.errorString());
+      }
+      break;
+    case UPLOAD_FILE_ABORTED:
+      Update.abort();
+      Logger::warn("[OTA] Upload aborted");
+      break;
+  }
 }
 
 /* ===== Legacy ===== */

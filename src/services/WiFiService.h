@@ -1,6 +1,7 @@
 #pragma once
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Update.h>
 #include <Ticker.h>
 #include <Preferences.h>
 #include <ESP32Ping.h>
@@ -48,6 +49,7 @@ private:
   static void handleWifi();          // "/wifi"
   static void handleTemp();          // "/temp"
   static void handleLamp();          // "/lamp"
+  static void handleSettings();      // "/settings"
   static void handleCss();           // "/app.css"
 
   // ===== Captive Portal =====
@@ -72,6 +74,11 @@ private:
   static void handleApiSetpoint();    // "/api/setpoint" (POST)
   static void handleApiFailsafe();    // "/api/failsafe" (POST)
   static void handleApiRestart();     // "/api/restart" (POST)
+
+  // ===== OTA Firmware Update =====
+  static void handleOtaPage();        // "/ota" (GET)
+  static void handleOtaResult();      // "/ota/upload" (POST complete)
+  static void handleOtaUpload();      // "/ota/upload" (POST upload chunks)
 
   // legacy
   static void handleRoot();

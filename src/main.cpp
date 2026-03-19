@@ -68,7 +68,10 @@ static bool          btnLedState  = false;
 // Suspect tracking (dynamic arrays)
 bool     g_suspect[MAX_SENSORS]      = {};
 static uint32_t g_invalidStart[MAX_SENSORS] = {};
+static uint32_t g_lastRebegin[MAX_SENSORS]  = {};  // last auto-recovery attempt
 bool     g_outlier[MAX_SENSORS]      = {};  // outlier detection per sensor
+
+static const uint32_t REBEGIN_INTERVAL_MS = 2 * 60 * 1000; // retry recovery every 2 min
 
 // All-sensors-fail fallback
 static uint32_t g_allSensorsFailedAt = 0;
@@ -527,6 +530,12 @@ static void updateSuspects() {
                 Logger::warn("[SUSPECT] %s -> suspect", cfg.sensors[i].id);
                 publishEventEx("sensor_suspect", "up", cfg.sensors[i].id, 0);
             }
+            // Auto-recovery: re-init GPIO every 5 min while suspect
+            if (g_suspect[i] && (now - g_lastRebegin[i]) >= REBEGIN_INTERVAL_MS) {
+                g_lastRebegin[i] = now;
+                Logger::info("[RECOVERY] auto rebegin %s", cfg.sensors[i].id);
+                SensorService::rebeginOne(cfg.sensors[i].id);
+            }
         } else {
             if (g_suspect[i]) {
                 uint32_t dur = g_invalidStart[i] ? (now - g_invalidStart[i]) : 0;
@@ -534,6 +543,7 @@ static void updateSuspects() {
                 publishEventEx("sensor_suspect", "down", cfg.sensors[i].id, dur);
             }
             g_invalidStart[i] = 0;
+            g_lastRebegin[i] = 0;
             g_suspect[i] = false;
         }
         if (prev != g_suspect[i]) anyChanged = true;
