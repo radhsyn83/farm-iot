@@ -30,6 +30,7 @@ struct PeripheralConfig {
     LampConfig   lamps[MAX_LAMPS];
     uint8_t      lampCount;
     uint8_t      masterRelayPin;  // 255 = disabled
+    uint8_t      sensorPowerPin;  // 255 = disabled (no HW power cycling)
     uint32_t     version;         // incremented on each save
 };
 

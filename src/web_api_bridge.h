@@ -22,3 +22,4 @@ extern uint32_t      g_restartAt;
 void webApplySetpoint(float val);
 void webApplyFailsafeConfig(float hardMin, float hardMax, float hyst, bool fsAuto);
 void webApplyRestart(uint32_t delayMs = 500);
+bool webApplySchedule(const String& json, String& err);

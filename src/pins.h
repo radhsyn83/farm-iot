@@ -16,4 +16,5 @@ namespace DefaultPins {
     static constexpr uint8_t LAMP2 = 26;
     static constexpr uint8_t ZC = 27;
     static constexpr uint8_t MASTER_RELAY = 33;
+    static constexpr uint8_t SENSOR_POWER = 23;  // shared DHT VCC control for HW power cycling
 }

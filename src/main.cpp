@@ -13,9 +13,11 @@
 #include "services/StateService.h"
 #include "services/FailsafeService.h"
 #include "services/PeripheralManager.h"
+#include "services/ScheduleManager.h"
 
 // Utils
 #include "helpers/Logger.h"
+#include "web_api_bridge.h"
 
 // ===== Defaults / Config =====
 #ifndef TELEMETRY_MS
@@ -73,9 +75,18 @@ bool     g_outlier[MAX_SENSORS]      = {};  // outlier detection per sensor
 
 static const uint32_t REBEGIN_INTERVAL_MS = 2 * 60 * 1000; // retry recovery every 2 min
 
+// Consecutive NaN tracking (power cycle escalation)
+static uint8_t  g_nanCount[MAX_SENSORS] = {};
+static const uint8_t NAN_COUNT_THRESHOLD = 3;
+static uint32_t g_lastPowerCycle = 0;
+static const uint32_t POWER_CYCLE_COOLDOWN_MS = 30000; // 30s between power cycles
+
 // All-sensors-fail fallback
 static uint32_t g_allSensorsFailedAt = 0;
 bool     g_timeFallbackActive = false;
+
+// Schedule runtime state
+static int8_t g_activeWindowIdx = -1; // -1 = no window active (global scope)
 
 // ===== Helpers =====
 static String nowISO8601() {
@@ -138,6 +149,8 @@ static void handleDesiredSetpoint(const String& payload, JsonDocument& doc);
 static void handleDesiredAlertConfig(const String& payload);
 static void handleDesiredRestart(const String& payload);
 static void handleDesiredConfig(const String& payload);
+static void handleDesiredSchedule(const String& payload);
+static void applyLampControl(float avgT, bool nowCycling);
 
 // ===== Event publishers =====
 static void publishEvent(const char* kind, const char* status) {
@@ -227,6 +240,7 @@ static void handleMqttMessage(const String& topic, const String& payload) {
         if (leaf == "alert_config")  { handleDesiredAlertConfig(payload); return; }
         if (leaf == "restart")       { handleDesiredRestart(payload); return; }
         if (leaf == "config")        { handleDesiredConfig(payload); return; }
+        if (leaf == "schedule")      { handleDesiredSchedule(payload); return; }
         return;
     }
 }
@@ -385,10 +399,43 @@ static void handleDesiredRestart(const String& payload) {
         return;
     }
 
+    // Reset ALL sensors: teardown + re-init + clear suspect state
+    if (key == "all_sensors") {
+        publishEvent("restart", "ack");
+        Logger::info("[RESTART] all_sensors — reinit %d sensors, clearing suspects", g_nSensors);
+
+        // Re-init all sensor GPIO
+        SensorService::init(PeripheralManager::config());
+
+        // Clear all suspect tracking state
+        memset(g_suspect, 0, sizeof(g_suspect));
+        memset(g_invalidStart, 0, sizeof(g_invalidStart));
+        memset(g_lastRebegin, 0, sizeof(g_lastRebegin));
+        memset(g_outlier, 0, sizeof(g_outlier));
+        memset(g_nanCount, 0, sizeof(g_nanCount));
+
+        // Reset all-sensors-fail fallback
+        g_allSensorsFailedAt = 0;
+        g_timeFallbackActive = false;
+
+        publishSuspectsSnapshot();
+        publishEvent("restart", "done");
+        return;
+    }
+
     // Dynamic: check if key matches any sensor id
     if (PeripheralManager::findSensorIndex(key.c_str()) >= 0) {
         publishEvent("restart", "ack");
         SensorService::rebeginOne(key.c_str());
+
+        // Clear suspect state for this sensor
+        int idx = PeripheralManager::findSensorIndex(key.c_str());
+        g_suspect[idx] = false;
+        g_invalidStart[idx] = 0;
+        g_lastRebegin[idx] = 0;
+        g_outlier[idx] = false;
+
+        publishSuspectsSnapshot();
         publishEvent("restart", "done");
         return;
     }
@@ -427,13 +474,33 @@ static void handleDesiredConfig(const String& payload) {
     SensorService::init(PeripheralManager::config());
     LampService::init(PeripheralManager::config());
 
-    // Reset suspect tracking
+    // Reset suspect + NaN tracking
     g_nSensors = PeripheralManager::config().sensorCount;
     memset(g_suspect, 0, sizeof(g_suspect));
     memset(g_invalidStart, 0, sizeof(g_invalidStart));
+    memset(g_nanCount, 0, sizeof(g_nanCount));
 
     MqttService::publishReportedConfig();
     Logger::info("Peripheral config applied via MQTT");
+}
+
+// ===== Schedule handler =====
+static void handleDesiredSchedule(const String& payload) {
+    String err;
+    if (!webApplySchedule(payload, err)) {
+        Logger::warn("Schedule apply failed: %s", err.c_str());
+        StaticJsonDocument<256> d;
+        d["device"] = DEVICE_ID;
+        d["error"]  = err;
+        d["ts"]     = nowISO8601();
+        String out; serializeJson(d, out);
+        MqttService::publish(MqttService::tReportedNS() + "schedule_error", out, false);
+        return;
+    }
+    // Publish reported schedule on success
+    MqttService::publish(MqttService::tReportedNS() + "schedule",
+                         ScheduleManager::toJson(), true);
+    Logger::info("Schedule applied via MQTT");
 }
 
 // ===== Telemetry publisher (dynamic) =====
@@ -503,7 +570,17 @@ static void publishTelemetry() {
         }
     }
 
-    health["time_fallback"] = g_timeFallbackActive;
+    health["time_fallback"]  = g_timeFallbackActive;
+    health["power_cycling"]  = SensorService::isPowerCycling();
+
+    // Schedule state (compact — full windows fetched via /api/schedule or reported/schedule)
+    const auto& sc = ScheduleManager::config();
+    JsonObject sched = d.createNestedObject("schedule");
+    sched["enabled"]    = sc.enabled;
+    sched["mode"]       = sc.mode;
+    sched["scope"]      = sc.scope;
+    sched["active_idx"] = g_activeWindowIdx;
+    sched["count"]      = sc.windowCount;
 
     d["ts"]           = millis();
     d["last_updated"] = nowISO8601();
@@ -515,6 +592,9 @@ static void publishTelemetry() {
 
 // ===== Suspect tracking (dynamic) =====
 static void updateSuspects() {
+    // Suppress during power cycle — all readings are invalid by design
+    if (SensorService::isPowerCycling()) return;
+
     const auto& cfg = PeripheralManager::config();
     const uint32_t now = millis();
     bool anyChanged = false;
@@ -552,6 +632,169 @@ static void updateSuspects() {
     if (anyChanged) publishSuspectsSnapshot();
 }
 
+// ===== Schedule-driven lamp control =====
+// Returns true if schedule drove the decision (skip legacy failsafe).
+static bool applyScheduleGlobal(float avgT, const struct tm& now) {
+    const auto& sc = ScheduleManager::config();
+    int idx = ScheduleManager::findWindow(now);
+    g_activeWindowIdx = idx;
+
+    if (idx < 0) {
+        // No matching window
+        if (sc.mode == 2) {
+            // Fully-replace: IDLE when no window matches
+            LampService::setMaster(false);
+            LampService::setAll(0.0f);
+            return true;
+        }
+        return false; // let legacy thermostat handle it
+    }
+
+    const auto& w = sc.windows[idx];
+
+    // Overheat guard (modes 0 and 1 only)
+    if (sc.mode != 2 && !isnan(avgT) && avgT > (g_hardMax + g_hystC)) {
+        LampService::setMaster(false);
+        LampService::setAll(0.0f);
+        return true;
+    }
+
+    // Critical-temp override: force ON if temp below threshold
+    if (!isnan(avgT) && isfinite(w.criticalTemp) && avgT < w.criticalTemp) {
+        LampService::setMaster(true);
+        LampService::setAll(1.0f);
+        return true;
+    }
+
+    // Mode 1 (layered): legacy hard_min heating still applies
+    if (sc.mode == 1 && !isnan(avgT) && avgT < (g_hardMin - g_hystC)) {
+        LampService::setMaster(true);
+        LampService::setAll(1.0f);
+        return true;
+    }
+
+    // Default window state
+    if (w.lampOn) {
+        LampService::setMaster(true);
+        LampService::setAll(1.0f);
+    } else {
+        LampService::setMaster(false);
+        LampService::setAll(0.0f);
+    }
+    return true;
+}
+
+static bool applySchedulePerLamp(float avgT, const struct tm& now) {
+    const auto& sc = ScheduleManager::config();
+    const auto& pcfg = PeripheralManager::config();
+
+    // Overheat guard: kill master if overheat in modes 0/1
+    if (sc.mode != 2 && !isnan(avgT) && avgT > (g_hardMax + g_hystC)) {
+        LampService::setMaster(false);
+        LampService::setAll(0.0f);
+        g_activeWindowIdx = -1;
+        return true;
+    }
+
+    // Master ON so per-lamp control works
+    LampService::setMaster(true);
+
+    bool anyMatched = false;
+    int firstIdx = -1;
+    for (uint8_t i = 0; i < pcfg.lampCount; i++) {
+        const char* lampId = pcfg.lamps[i].id;
+        int idx = ScheduleManager::findWindow(now, lampId);
+        if (idx < 0) {
+            // No window for this lamp
+            if (sc.mode == 2) {
+                LampService::setLampById(lampId, 0.0f);
+            }
+            continue;
+        }
+        anyMatched = true;
+        if (firstIdx < 0) firstIdx = idx;
+        const auto& w = sc.windows[idx];
+
+        bool forceOn = false;
+        if (!isnan(avgT) && isfinite(w.criticalTemp) && avgT < w.criticalTemp) forceOn = true;
+        if (sc.mode == 1 && !isnan(avgT) && avgT < (g_hardMin - g_hystC)) forceOn = true;
+
+        float power = (forceOn || w.lampOn) ? 1.0f : 0.0f;
+        LampService::setLampById(lampId, power);
+    }
+    g_activeWindowIdx = firstIdx;
+
+    // If no window matched any lamp and mode is not fully-replace, let legacy handle
+    if (!anyMatched && sc.mode != 2) {
+        return false;
+    }
+    return true;
+}
+
+static void applyLampControl(float avgT, bool nowCycling) {
+    const auto& sc = ScheduleManager::config();
+
+    // User disabled auto → release control
+    if (!g_fsAuto) {
+        if (Failsafe::isActive() || g_timeFallbackActive) {
+            if (g_timeFallbackActive) g_timeFallbackActive = false;
+            Failsafe::forceOff();
+        }
+        g_activeWindowIdx = -1;
+        return;
+    }
+
+    // Power cycling → skip (held by sensor state)
+    if (nowCycling) return;
+
+    // All-sensors-failed fallback (existing behavior, unchanged)
+    if (isnan(avgT)) {
+        if (g_allSensorsFailedAt == 0) g_allSensorsFailedAt = millis();
+        if (millis() - g_allSensorsFailedAt > SENSOR_FAIL_TIMEOUT_MS) {
+            bool night = isNightHour();
+            if (night && !g_timeFallbackActive) {
+                g_timeFallbackActive = true;
+                LampService::setMaster(true);
+                LampService::setAll(1.0f);
+                Logger::warn("[SAFETY] ALL SENSORS FAILED — night fallback: HEATING ON");
+            } else if (!night && g_timeFallbackActive) {
+                g_timeFallbackActive = false;
+                LampService::setMaster(false);
+                LampService::setAll(0.0f);
+                Logger::warn("[SAFETY] ALL SENSORS FAILED — day fallback: HEATING OFF");
+            }
+        }
+        g_activeWindowIdx = -1;
+        return;
+    }
+
+    // Sensor data available
+    g_allSensorsFailedAt = 0;
+    if (g_timeFallbackActive) {
+        g_timeFallbackActive = false;
+        Logger::info("[SAFETY] Sensors recovered, exiting time-based fallback");
+    }
+
+    // Try schedule first
+    if (sc.enabled) {
+        struct tm now;
+        time_t t;
+        time(&t);
+        if (t > 100000) { // NTP synced
+            localtime_r(&t, &now);
+            bool handled = (sc.scope == 1) ? applySchedulePerLamp(avgT, now)
+                                           : applyScheduleGlobal(avgT, now);
+            if (handled) return;
+        } else {
+            Logger::warn("[SCHEDULE] NTP not synced, deferring to legacy failsafe");
+        }
+    }
+
+    // Legacy failsafe thermostat
+    g_activeWindowIdx = -1;
+    Failsafe::tick(avgT, MqttService::connected(), WiFiService::isConnected());
+}
+
 // ===== Setup =====
 void setup() {
     delay(300);
@@ -565,6 +808,7 @@ void setup() {
     // Init services
     StateService::begin();
     PeripheralManager::begin();
+    ScheduleManager::begin();
 
     // Dynamic peripheral init
     SensorService::init(PeripheralManager::config());
@@ -639,8 +883,42 @@ void loop() {
     }
     MqttService::loop();
 
+    // ===== Tick power cycle state machine =====
+    static bool wasPowerCycling = false;
+    SensorService::tickPowerCycle();
+    bool nowCycling = SensorService::isPowerCycling();
+    if (wasPowerCycling && !nowCycling) {
+        publishEvent("power_cycle", "done");
+        Logger::info("[POWER_CYCLE] completed — sensors re-initialized");
+    }
+    wasPowerCycling = nowCycling;
+
     // ===== Read sensors (dynamic) =====
     g_nSensors = SensorService::readAll(g_readings, MAX_SENSORS);
+
+    // ===== Consecutive NaN counting → power cycle trigger =====
+    if (!nowCycling) {
+        bool anyTriggered = false;
+        for (uint8_t i = 0; i < g_nSensors; i++) {
+            if (!tempValid(g_readings[i].temp)) {
+                g_nanCount[i]++;
+                if (g_nanCount[i] >= NAN_COUNT_THRESHOLD &&
+                    (millis() - g_lastPowerCycle) >= POWER_CYCLE_COOLDOWN_MS) {
+                    anyTriggered = true;
+                    Logger::warn("[POWER_CYCLE] %s: %d consecutive NaN — triggering",
+                        PeripheralManager::config().sensors[i].id, g_nanCount[i]);
+                }
+            } else {
+                g_nanCount[i] = 0;
+            }
+        }
+        if (anyTriggered) {
+            SensorService::startPowerCycle();
+            g_lastPowerCycle = millis();
+            memset(g_nanCount, 0, sizeof(g_nanCount));
+            publishEvent("power_cycle", "start");
+        }
+    }
 
     // ===== Suspect tracking =====
     updateSuspects();
@@ -695,41 +973,8 @@ void loop() {
     }
     // validCount == 0 → avgT stays NAN
 
-    // ===== Failsafe tick (only when auto mode is ON) =====
-    if (g_fsAuto) {
-        if (!isnan(avgT)) {
-            // Normal: sensor data available → run thermostat
-            g_allSensorsFailedAt = 0;
-            if (g_timeFallbackActive) {
-                g_timeFallbackActive = false;
-                Logger::info("[SAFETY] Sensors recovered, exiting time-based fallback");
-            }
-            Failsafe::tick(avgT, MqttService::connected(), WiFiService::isConnected());
-        } else {
-            // All sensors failed or all excluded as outliers
-            if (g_allSensorsFailedAt == 0) g_allSensorsFailedAt = millis();
-
-            if (millis() - g_allSensorsFailedAt > SENSOR_FAIL_TIMEOUT_MS) {
-                // Time-based fallback: heaters ON at night, OFF during day
-                bool night = isNightHour();
-                if (night && !g_timeFallbackActive) {
-                    g_timeFallbackActive = true;
-                    LampService::setMaster(true);
-                    LampService::setAll(1.0f);
-                    Logger::warn("[SAFETY] ALL SENSORS FAILED — night fallback: HEATING ON");
-                } else if (!night && g_timeFallbackActive) {
-                    g_timeFallbackActive = false;
-                    LampService::setMaster(false);
-                    LampService::setAll(0.0f);
-                    Logger::warn("[SAFETY] ALL SENSORS FAILED — day fallback: HEATING OFF");
-                }
-            }
-        }
-    } else if (Failsafe::isActive() || g_timeFallbackActive) {
-        // User turned off auto → release control
-        if (g_timeFallbackActive) g_timeFallbackActive = false;
-        Failsafe::forceOff();
-    }
+    // ===== Lamp control (schedule-aware) =====
+    applyLampControl(avgT, nowCycling);
 
     // ===== Telemetry interval =====
     if (millis() - lastTelemetry >= TELEMETRY_MS) {
@@ -782,4 +1027,13 @@ void webApplyRestart(uint32_t delayMs) {
     g_pendingRestart = true;
     g_restartAt = millis() + delayMs;
     Logger::info("[WEB] Restart scheduled in %lu ms", delayMs);
+}
+
+bool webApplySchedule(const String& json, String& err) {
+    LampScheduleConfig newCfg;
+    if (!ScheduleManager::parseJson(json, newCfg, err)) return false;
+    if (!ScheduleManager::applyConfig(newCfg, err)) return false;
+    Logger::info("[WEB] Schedule applied (enabled=%d, %d windows)",
+                 newCfg.enabled, newCfg.windowCount);
+    return true;
 }

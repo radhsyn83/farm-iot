@@ -9,7 +9,7 @@ bool PeripheralManager::_initialized = false;
 
 static const char* NVS_NS  = "periph";
 static const char* NVS_KEY = "cfg";
-static const uint32_t CONFIG_VERSION_MARKER = 0x50455202; // "PER\x02" — bumped to force re-default (strapping pin fix)
+static const uint32_t CONFIG_VERSION_MARKER = 0x50455203; // "PER\x03" — bumped: added sensorPowerPin
 
 // ===== begin =====
 void PeripheralManager::begin() {
@@ -23,8 +23,8 @@ void PeripheralManager::begin() {
     allocatePwmChannels(_cfg);
     _initialized = true;
 
-    Logger::info("PeripheralManager: %d sensors, %d lamps, master_pin=%d, ver=%u",
-                 _cfg.sensorCount, _cfg.lampCount, _cfg.masterRelayPin, _cfg.version);
+    Logger::info("PeripheralManager: %d sensors, %d lamps, master_pin=%d, sensor_power_pin=%d, ver=%u",
+                 _cfg.sensorCount, _cfg.lampCount, _cfg.masterRelayPin, _cfg.sensorPowerPin, _cfg.version);
 }
 
 const PeripheralConfig& PeripheralManager::config() {
@@ -62,6 +62,7 @@ void PeripheralManager::loadDefaults(PeripheralConfig& cfg) {
     cfg.lamps[1].zcPin  = 255;
 
     cfg.masterRelayPin = 33;
+    cfg.sensorPowerPin = DefaultPins::SENSOR_POWER;
     cfg.version = CONFIG_VERSION_MARKER;
 }
 
@@ -113,7 +114,7 @@ bool PeripheralManager::validate(const PeripheralConfig& cfg, String& err) {
     }
 
     // Collect all used pins for duplicate check
-    uint8_t usedPins[MAX_SENSORS + MAX_LAMPS + 2]; // +master +potential zc
+    uint8_t usedPins[MAX_SENSORS + MAX_LAMPS + 3]; // +master +sensorPower +potential zc
     uint8_t usedCount = 0;
 
     auto addPin = [&](uint8_t pin, const char* label) -> bool {
@@ -172,6 +173,15 @@ bool PeripheralManager::validate(const PeripheralConfig& cfg, String& err) {
             return false;
         }
         if (!addPin(cfg.masterRelayPin, "master_relay")) return false;
+    }
+
+    // Sensor power pin
+    if (cfg.sensorPowerPin != 255) {
+        if (GpioCheck::isInputOnly(cfg.sensorPowerPin)) {
+            err = "Sensor power pin " + String(cfg.sensorPowerPin) + " is input-only";
+            return false;
+        }
+        if (!addPin(cfg.sensorPowerPin, "sensor_power")) return false;
     }
 
     // Check duplicate IDs
@@ -265,8 +275,9 @@ String PeripheralManager::configToJson() {
         if (_cfg.lamps[i].zcPin != 255) l["zcPin"] = _cfg.lamps[i].zcPin;
     }
 
-    doc["masterRelayPin"] = _cfg.masterRelayPin;
-    doc["version"]        = _cfg.version;
+    doc["masterRelayPin"]  = _cfg.masterRelayPin;
+    doc["sensorPowerPin"]  = _cfg.sensorPowerPin;
+    doc["version"]         = _cfg.version;
 
     String out;
     serializeJson(doc, out);
@@ -338,6 +349,11 @@ bool PeripheralManager::parseConfigJson(const String& json, PeripheralConfig& ou
     // Master relay
     out.masterRelayPin = doc.containsKey("masterRelayPin")
                          ? doc["masterRelayPin"].as<uint8_t>()
+                         : 255;
+
+    // Sensor power pin
+    out.sensorPowerPin = doc.containsKey("sensorPowerPin")
+                         ? doc["sensorPowerPin"].as<uint8_t>()
                          : 255;
 
     out.version = 0; // will be set by applyConfig

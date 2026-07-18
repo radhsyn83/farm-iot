@@ -66,6 +66,11 @@ private:
   static void handleGetPeripherals(); // "/api/peripherals" (GET)
   static void handlePostPeripherals();// "/api/peripherals" (POST)
 
+  // ===== Schedule Routes =====
+  static void handleSchedulePage();   // "/schedule"
+  static void handleGetSchedule();    // "/api/schedule" (GET)
+  static void handlePostSchedule();   // "/api/schedule" (POST)
+
   // ===== New API & Pages =====
   static void handleSystem();         // "/system"
   static void handleApiStatus();      // "/api/status" (GET)

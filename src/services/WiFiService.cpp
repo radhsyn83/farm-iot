@@ -5,6 +5,7 @@
 #include "MqttService.h"
 #include "FailsafeService.h"
 #include "StateService.h"
+#include "ScheduleManager.h"
 #include "../config.h"
 #include "../web_api_bridge.h"
 
@@ -289,6 +290,11 @@ void WiFiService::registerRoutes() {
   // Peripheral config API
   server.on("/api/peripherals", HTTP_GET,  handleGetPeripherals);
   server.on("/api/peripherals", HTTP_POST, handlePostPeripherals);
+
+  // Schedule API + page
+  server.on("/schedule",        HTTP_GET,  handleSchedulePage);
+  server.on("/api/schedule",    HTTP_GET,  handleGetSchedule);
+  server.on("/api/schedule",    HTTP_POST, handlePostSchedule);
 
   // New APIs
   server.on("/api/status",    HTTP_GET,  handleApiStatus);
@@ -719,6 +725,11 @@ void WiFiService::handleSettings() {
   html += "<div class='left'><b>Peripherals</b><div class='badge'>Sensors, lamps, pins config</div></div>";
   html += "<span style='color:var(--muted);font-size:18px'>&rsaquo;</span></a>";
 
+  // Lamp Schedule
+  html += "<a href='/schedule' class='item' style='text-decoration:none;color:var(--text)'>";
+  html += "<div class='left'><b>Lamp Schedule</b><div class='badge'>Time-based on/off with critical-temp override</div></div>";
+  html += "<span style='color:var(--muted);font-size:18px'>&rsaquo;</span></a>";
+
   // OTA
   html += "<a href='/ota' class='item' style='text-decoration:none;color:var(--text)'>";
   html += "<div class='left'><b>OTA Update</b><div class='badge'>Upload firmware over WiFi</div></div>";
@@ -1004,6 +1015,143 @@ void WiFiService::handlePostPeripherals() {
   LampService::init(PeripheralManager::config());
   server.send(200,"application/json","{\"ok\":true}");
   if (MqttService::connected()) MqttService::publishReportedConfig();
+}
+
+/* ========================================================================= */
+/*                      SCHEDULE PAGE (/schedule)                            */
+/* ========================================================================= */
+void WiFiService::handleSchedulePage() {
+  String html = pageHead("Lamp Schedule");
+  html += "<div class='page'><div class='card'>";
+  html += R"HTML(
+  <h1>Lamp Schedule</h1>
+  <div class='badge'>Time-based on/off with critical-temp override</div>
+  <div id='msg' class='alert'></div>
+
+  <div class='section'>
+    <div class='row'>
+      <label><input type='checkbox' id='enabled'> <b>Enable schedule</b></label>
+    </div>
+    <div class='row'>
+      <span class='badge'>Mode</span>
+      <select id='mode' class='input sm'>
+        <option value='0'>Replace heating (keep overheat)</option>
+        <option value='1'>Layered with thermostat</option>
+        <option value='2'>Fully replace failsafe</option>
+      </select>
+    </div>
+    <div class='row'>
+      <span class='badge'>Scope</span>
+      <select id='scope' class='input sm'>
+        <option value='0'>Global (all lamps)</option>
+        <option value='1'>Per-lamp</option>
+      </select>
+    </div>
+  </div>
+
+  <div class='section'>
+    <h2>Windows</h2>
+    <div id='windowList' class='list'></div>
+    <div class='row'>
+      <input id='wStart' type='time' class='input sm' value='05:00'>
+      <span class='badge'>to</span>
+      <input id='wEnd' type='time' class='input sm' value='10:00'>
+    </div>
+    <div class='row'>
+      <select id='wOn' class='input sm'><option value='1'>ON</option><option value='0'>OFF</option></select>
+      <input id='wCt' type='number' step='0.5' class='input sm' placeholder='Critical °C' style='max-width:110px'>
+      <select id='wLamp' class='input sm' style='max-width:110px'><option value='*'>All lamps</option></select>
+      <button class='btn sm' onclick='addWin()'>Add</button>
+    </div>
+  </div>
+
+  <div class='row'><button class='btn' onclick='save()'>Save & Apply</button></div>
+</div>
+)HTML";
+  html += navBar("/settings");
+  html += R"HTML(
+<script>
+let cfg={enabled:false,mode:0,scope:0,windows:[]};
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,'0');
+function show(m,t){const el=$('msg');el.textContent=m;el.className='alert '+t;}
+function timeStr(h,m){return pad(h)+':'+pad(m);}
+function parseT(s){const p=s.split(':');return[parseInt(p[0])||0,parseInt(p[1])||0];}
+function render(){
+  $('enabled').checked=!!cfg.enabled;
+  $('mode').value=String(cfg.mode||0);
+  $('scope').value=String(cfg.scope||0);
+  const wl=$('windowList');wl.innerHTML='';
+  (cfg.windows||[]).forEach((w,i)=>{
+    const d=document.createElement('div');d.className='item';
+    const ct=(typeof w.ct==='number')?(w.ct.toFixed(1)+'°C'):'—';
+    d.innerHTML='<div class="left"><b>'+timeStr(w.sh,w.sm)+' → '+timeStr(w.eh,w.em)+'</b>'+
+      '<div class="badge">'+(w.on?'ON':'OFF')+' · crit '+ct+' · '+(w.lamp||'*')+'</div></div>'+
+      '<button class="btn sm danger" onclick="rmWin('+i+')">Del</button>';
+    wl.appendChild(d);
+  });
+}
+function addWin(){
+  if((cfg.windows||[]).length>=8){show('Max 8 windows','err');return;}
+  const [sh,sm]=parseT($('wStart').value);
+  const [eh,em]=parseT($('wEnd').value);
+  if(sh===eh&&sm===em){show('Zero-duration window','err');return;}
+  const ctVal=$('wCt').value;
+  const w={sh,sm,eh,em,on:$('wOn').value==='1',lamp:$('wLamp').value||'*'};
+  if(ctVal!=='')w.ct=parseFloat(ctVal);
+  cfg.windows=cfg.windows||[];cfg.windows.push(w);render();
+}
+function rmWin(i){cfg.windows.splice(i,1);render();}
+async function save(){
+  cfg.enabled=$('enabled').checked;
+  cfg.mode=parseInt($('mode').value)||0;
+  cfg.scope=parseInt($('scope').value)||0;
+  show('Saving...','info');
+  try{
+    const r=await fetch('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    const j=await r.json();
+    if(j.ok) show('Applied!','ok'); else show('Error: '+(j.error||'unknown'),'err');
+  }catch(e){show('Failed.','err');}
+}
+async function loadLamps(){
+  try{
+    const r=await fetch('/api/status');const s=await r.json();
+    const sel=$('wLamp');sel.innerHTML='<option value="*">All lamps</option>';
+    (s.lamps||[]).forEach(l=>{
+      const o=document.createElement('option');o.value=l.id;o.textContent=l.id;sel.appendChild(o);
+    });
+  }catch(e){}
+}
+async function load(){
+  try{const r=await fetch('/api/schedule');cfg=await r.json();if(!cfg.windows)cfg.windows=[];render();}
+  catch(e){show('Failed to load.','err');}
+}
+loadLamps();load();
+</script>
+)HTML";
+  html += "</div></body></html>";
+  server.send(200, "text/html; charset=utf-8", html);
+}
+
+/* ========================================================================= */
+/*                      SCHEDULE API (/api/schedule)                         */
+/* ========================================================================= */
+void WiFiService::handleGetSchedule() {
+  server.send(200, "application/json", ScheduleManager::toJson());
+}
+
+void WiFiService::handlePostSchedule() {
+  if (server.method() != HTTP_POST) { server.send(405,"application/json","{\"error\":\"use POST\"}"); return; }
+  String body = server.arg("plain");
+  String err;
+  if (!webApplySchedule(body, err)) {
+    server.send(400, "application/json", "{\"ok\":false,\"error\":\"" + err + "\"}");
+    return;
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
+  if (MqttService::connected()) {
+    MqttService::publish(MqttService::tReportedNS() + "schedule", ScheduleManager::toJson(), true);
+  }
 }
 
 /* ========================================================================= */
